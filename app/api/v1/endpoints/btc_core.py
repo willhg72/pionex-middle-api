@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import require_api_key
+from app.core.security import require_api_key, tenant_id_from_api_key
 from app.core.settings import get_settings
 from app.db.session import get_db_session
 from app.repositories.btc_core_repository import BtcCoreRepository
@@ -26,6 +26,7 @@ async def dashboard_btc_core(
     currentBtc: float = Query(0.0, ge=0),
     targetBtc: float = Query(0.1, gt=0),
     source: str = Query("pionex"),
+    x_api_key: str = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session),
 ) -> BtcCoreResponse:
     repo = BtcCoreRepository(db)
@@ -34,31 +35,34 @@ async def dashboard_btc_core(
         current_btc=currentBtc,
         target_btc=targetBtc,
         source=source,
+        tenant_id=tenant_id_from_api_key(x_api_key),
         repo=repo,
     )
     return BtcCoreResponse(**payload)
 
 
 @router.post("/buy", response_model=BtcCoreBuyOut)
-async def dashboard_btc_core_buy(payload: BtcCoreBuyIn, db: AsyncSession = Depends(get_db_session)) -> BtcCoreBuyOut:
+async def dashboard_btc_core_buy(payload: BtcCoreBuyIn, x_api_key: str = Depends(require_api_key), db: AsyncSession = Depends(get_db_session)) -> BtcCoreBuyOut:
     repo = BtcCoreRepository(db)
     result = await btc_core_service.register_manual_buy(
         btc_amount=payload.btcAmount,
         usdt_amount=payload.usdtAmount,
         price=payload.price,
         note=payload.note,
+        tenant_id=tenant_id_from_api_key(x_api_key),
         repo=repo,
     )
     return BtcCoreBuyOut(**result)
 
 
 @router.post("/buy-preview", response_model=BtcCoreBuyPreviewOut)
-async def dashboard_btc_core_buy_preview(payload: BtcCoreBuyPreviewIn, db: AsyncSession = Depends(get_db_session)) -> BtcCoreBuyPreviewOut:
+async def dashboard_btc_core_buy_preview(payload: BtcCoreBuyPreviewIn, x_api_key: str = Depends(require_api_key), db: AsyncSession = Depends(get_db_session)) -> BtcCoreBuyPreviewOut:
     settings = get_settings()
     repo = BtcCoreRepository(db)
     result = await btc_core_service.buy_preview(
         usdt_amount=payload.usdtAmount,
         reference_price=payload.referencePrice,
+        tenant_id=tenant_id_from_api_key(x_api_key),
         repo=repo,
         secret=settings.miner_confirmation_secret,
     )
@@ -66,7 +70,7 @@ async def dashboard_btc_core_buy_preview(payload: BtcCoreBuyPreviewIn, db: Async
 
 
 @router.post("/buy-execute", response_model=BtcCoreBuyExecuteOut)
-async def dashboard_btc_core_buy_execute(payload: BtcCoreBuyExecuteIn, db: AsyncSession = Depends(get_db_session)) -> BtcCoreBuyExecuteOut:
+async def dashboard_btc_core_buy_execute(payload: BtcCoreBuyExecuteIn, x_api_key: str = Depends(require_api_key), db: AsyncSession = Depends(get_db_session)) -> BtcCoreBuyExecuteOut:
     settings = get_settings()
     cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
     api_key, api_secret, source = miners_service.resolve_credentials(cred_payload, settings.pionex_api_key, settings.pionex_api_secret)
@@ -77,6 +81,7 @@ async def dashboard_btc_core_buy_execute(payload: BtcCoreBuyExecuteIn, db: Async
         api_secret=api_secret,
         credentials_source=source,
         secret=settings.miner_confirmation_secret,
+        tenant_id=tenant_id_from_api_key(x_api_key),
         repo=repo,
     )
     return BtcCoreBuyExecuteOut(**result)

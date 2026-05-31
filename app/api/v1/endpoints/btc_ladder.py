@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import require_api_key
+from app.core.security import require_api_key, tenant_id_from_api_key
 from app.core.settings import get_settings
 from app.db.session import get_db_session
 from app.repositories.btc_core_repository import BtcCoreRepository
@@ -27,8 +27,9 @@ router = APIRouter(prefix="/dashboard/btc-ladder", dependencies=[Depends(require
 
 
 @router.get("", response_model=BtcLadderResponse)
-async def dashboard_btc_ladder(db: AsyncSession = Depends(get_db_session)) -> BtcLadderResponse:
+async def dashboard_btc_ladder(x_api_key: str = Depends(require_api_key), db: AsyncSession = Depends(get_db_session)) -> BtcLadderResponse:
     payload = await btc_ladder_service.dashboard(
+        tenant_id=tenant_id_from_api_key(x_api_key),
         ladder_repo=BtcLadderRepository(db),
         core_repo=BtcCoreRepository(db),
     )
@@ -41,7 +42,7 @@ async def dashboard_btc_ladder_price() -> BtcLadderPriceResponse:
 
 
 @router.post("/place-all", response_model=BtcLadderPlaceAllOut)
-async def dashboard_btc_ladder_place_all(payload: BtcLadderPlaceAllIn, db: AsyncSession = Depends(get_db_session)) -> BtcLadderPlaceAllOut:
+async def dashboard_btc_ladder_place_all(payload: BtcLadderPlaceAllIn, x_api_key: str = Depends(require_api_key), db: AsyncSession = Depends(get_db_session)) -> BtcLadderPlaceAllOut:
     settings = get_settings()
     cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
     api_key, api_secret, source = miners_service.resolve_credentials(cred_payload, settings.pionex_api_key, settings.pionex_api_secret)
@@ -52,6 +53,7 @@ async def dashboard_btc_ladder_place_all(payload: BtcLadderPlaceAllIn, db: Async
         api_key=api_key,
         api_secret=api_secret,
         credentials_source=source,
+        tenant_id=tenant_id_from_api_key(x_api_key),
         ladder_repo=BtcLadderRepository(db),
     )
     return BtcLadderPlaceAllOut(**result)
@@ -78,7 +80,7 @@ async def dashboard_btc_ladder_limit_preview(payload: BtcLadderLimitPreviewIn) -
 
 
 @router.post("/limit-execute", response_model=BtcLadderLimitExecuteOut)
-async def dashboard_btc_ladder_limit_execute(payload: BtcLadderLimitExecuteIn, db: AsyncSession = Depends(get_db_session)) -> BtcLadderLimitExecuteOut:
+async def dashboard_btc_ladder_limit_execute(payload: BtcLadderLimitExecuteIn, x_api_key: str = Depends(require_api_key), db: AsyncSession = Depends(get_db_session)) -> BtcLadderLimitExecuteOut:
     settings = get_settings()
     cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
     api_key, api_secret, source = miners_service.resolve_credentials(cred_payload, settings.pionex_api_key, settings.pionex_api_secret)
@@ -88,18 +90,20 @@ async def dashboard_btc_ladder_limit_execute(payload: BtcLadderLimitExecuteIn, d
         api_secret=api_secret,
         credentials_source=source,
         secret=settings.miner_confirmation_secret,
+        tenant_id=tenant_id_from_api_key(x_api_key),
         ladder_repo=BtcLadderRepository(db),
     )
     return BtcLadderLimitExecuteOut(**result)
 
 
 @router.post("/fill-confirm", response_model=BtcLadderFillConfirmOut)
-async def dashboard_btc_ladder_fill_confirm(payload: BtcLadderFillConfirmIn, db: AsyncSession = Depends(get_db_session)) -> BtcLadderFillConfirmOut:
+async def dashboard_btc_ladder_fill_confirm(payload: BtcLadderFillConfirmIn, x_api_key: str = Depends(require_api_key), db: AsyncSession = Depends(get_db_session)) -> BtcLadderFillConfirmOut:
     result = await btc_ladder_service.fill_confirm(
         btc_amount=payload.btcAmount,
         usdt_amount=payload.usdtAmount,
         price=payload.price,
         note=payload.note,
+        tenant_id=tenant_id_from_api_key(x_api_key),
         core_repo=BtcCoreRepository(db),
     )
     return BtcLadderFillConfirmOut(**result)

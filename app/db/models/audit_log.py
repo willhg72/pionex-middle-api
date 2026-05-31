@@ -14,6 +14,7 @@ class AuditLog(Base):
     id: Mapped[str] = mapped_column(
         UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4())
     )
+    tenant_id: Mapped[str] = mapped_column(String(80), index=True, default="legacy")
     event_type: Mapped[str] = mapped_column(String(120), index=True)
     actor: Mapped[str] = mapped_column(String(120), default="system", index=True)
     message: Mapped[str] = mapped_column(Text)

@@ -11,6 +11,7 @@ class MinerSnapshot(Base):
     __tablename__ = "miner_snapshots"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(80), index=True, default="legacy")
     bu_order_id: Mapped[str] = mapped_column(String(120), index=True)
     symbol: Mapped[str] = mapped_column(String(32), index=True)
     status: Mapped[str | None] = mapped_column(String(40), nullable=True)
@@ -27,6 +28,7 @@ class MinerEvent(Base):
     __tablename__ = "miner_events"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(80), index=True, default="legacy")
     bu_order_id: Mapped[str] = mapped_column(String(120), index=True)
     symbol: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     event_type: Mapped[str] = mapped_column(String(80), index=True)

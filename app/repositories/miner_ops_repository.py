@@ -11,8 +11,9 @@ class MinerOpsRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def save_snapshot(self, row: dict[str, Any]) -> None:
+    async def save_snapshot(self, row: dict[str, Any], tenant_id: str) -> None:
         model = MinerSnapshot(
+            tenant_id=tenant_id,
             bu_order_id=str(row.get("buOrderId") or ""),
             symbol=str(row.get("symbol") or ""),
             status=row.get("status"),
@@ -25,8 +26,9 @@ class MinerOpsRepository:
         )
         self.session.add(model)
 
-    async def save_event(self, *, bu_order_id: str, symbol: str | None, event_type: str, reason: str | None, payload: dict[str, Any]) -> None:
+    async def save_event(self, *, tenant_id: str, bu_order_id: str, symbol: str | None, event_type: str, reason: str | None, payload: dict[str, Any]) -> None:
         model = MinerEvent(
+            tenant_id=tenant_id,
             bu_order_id=bu_order_id,
             symbol=symbol,
             event_type=event_type,
@@ -35,8 +37,8 @@ class MinerOpsRepository:
         )
         self.session.add(model)
 
-    async def list_snapshots(self, *, symbol: str | None, limit: int) -> list[dict[str, Any]]:
-        stmt = select(MinerSnapshot).order_by(desc(MinerSnapshot.created_at)).limit(limit)
+    async def list_snapshots(self, *, tenant_id: str, symbol: str | None, limit: int) -> list[dict[str, Any]]:
+        stmt = select(MinerSnapshot).where(MinerSnapshot.tenant_id == tenant_id).order_by(desc(MinerSnapshot.created_at)).limit(limit)
         if symbol:
             stmt = stmt.where(MinerSnapshot.symbol == symbol.upper())
         rows = (await self.session.execute(stmt)).scalars().all()
@@ -56,8 +58,8 @@ class MinerOpsRepository:
             for row in rows
         ]
 
-    async def list_events(self, *, symbol: str | None, limit: int) -> list[dict[str, Any]]:
-        stmt = select(MinerEvent).order_by(desc(MinerEvent.created_at)).limit(limit)
+    async def list_events(self, *, tenant_id: str, symbol: str | None, limit: int) -> list[dict[str, Any]]:
+        stmt = select(MinerEvent).where(MinerEvent.tenant_id == tenant_id).order_by(desc(MinerEvent.created_at)).limit(limit)
         if symbol:
             stmt = stmt.where(MinerEvent.symbol == symbol.upper())
         rows = (await self.session.execute(stmt)).scalars().all()
@@ -73,8 +75,8 @@ class MinerOpsRepository:
             for row in rows
         ]
 
-    async def list_latest_snapshot_payloads(self, *, limit: int = 400) -> list[dict[str, Any]]:
-        stmt = select(MinerSnapshot).order_by(desc(MinerSnapshot.created_at)).limit(limit)
+    async def list_latest_snapshot_payloads(self, *, tenant_id: str, limit: int = 400) -> list[dict[str, Any]]:
+        stmt = select(MinerSnapshot).where(MinerSnapshot.tenant_id == tenant_id).order_by(desc(MinerSnapshot.created_at)).limit(limit)
         rows = (await self.session.execute(stmt)).scalars().all()
         latest_by_order: dict[str, dict[str, Any]] = {}
         for row in rows:

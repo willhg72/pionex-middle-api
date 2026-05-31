@@ -14,6 +14,7 @@ class BtcLadderRepository:
     async def create_order(
         self,
         *,
+        tenant_id: str,
         order_id: str,
         price: float,
         usdt_amount: float,
@@ -26,6 +27,7 @@ class BtcLadderRepository:
     ) -> None:
         self.session.add(
             BtcLadderOrder(
+                tenant_id=tenant_id,
                 order_id=order_id,
                 price=price,
                 usdt_amount=usdt_amount,
@@ -38,8 +40,12 @@ class BtcLadderRepository:
             )
         )
 
-    async def list_orders(self, limit: int = 200) -> list[dict[str, Any]]:
-        rows = (await self.session.execute(select(BtcLadderOrder).order_by(desc(BtcLadderOrder.created_at)).limit(limit))).scalars().all()
+    async def list_orders(self, *, tenant_id: str, limit: int = 200) -> list[dict[str, Any]]:
+        rows = (
+            await self.session.execute(
+                select(BtcLadderOrder).where(BtcLadderOrder.tenant_id == tenant_id).order_by(desc(BtcLadderOrder.created_at)).limit(limit)
+            )
+        ).scalars().all()
         return [
             {
                 "id": row.id,

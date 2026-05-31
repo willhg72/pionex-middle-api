@@ -63,7 +63,7 @@ class BtcCoreService:
         return {"btcAmount": btc_amount, "usdtAmount": usdt_amount, "price": price, "estimated": estimated}
 
     async def dashboard(
-        self, *, monthly_budget_usdt: float, current_btc: float, target_btc: float, source: str, repo: BtcCoreRepository
+        self, *, monthly_budget_usdt: float, current_btc: float, target_btc: float, source: str, tenant_id: str, repo: BtcCoreRepository
     ) -> dict[str, Any]:
         _, klines = await analyzer_service.fetch_klines(
             symbol="BTCUSDT", interval="1d", limit=180, source=source, start_time=None, end_time=None
@@ -73,7 +73,7 @@ class BtcCoreService:
         avg_30 = sum(closes[-30:]) / max(1, min(30, len(closes)))
         momentum_30d = (current_price / avg_30 - 1.0) if avg_30 > 0 else 0.0
 
-        buys = await repo.list_buys(limit=1000)
+        buys = await repo.list_buys(tenant_id=tenant_id, limit=1000)
         ledger = self.summarize_buys(buys)
         effective_btc = ledger["totalBtc"] if ledger["totalBtc"] > 0 else current_btc
         gap = max(0.0, target_btc - effective_btc)
@@ -101,7 +101,7 @@ class BtcCoreService:
         }
 
     async def register_manual_buy(
-        self, *, btc_amount: float, usdt_amount: float, price: float | None, note: str | None, repo: BtcCoreRepository
+        self, *, btc_amount: float, usdt_amount: float, price: float | None, note: str | None, tenant_id: str, repo: BtcCoreRepository
     ) -> dict[str, Any]:
         if btc_amount <= 0 and usdt_amount <= 0:
             raise HTTPException(status_code=400, detail="btcAmount or usdtAmount is required")
@@ -111,9 +111,10 @@ class BtcCoreService:
             usdt_amount = btc_amount * price
         if price is None and btc_amount > 0 and usdt_amount > 0:
             price = usdt_amount / btc_amount
-        buy_id = f"btc-core-buy-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
+        buy_id = f"btc-core-buy-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{time.time_ns() % 1000000}"
         row = {"buyId": buy_id, "boughtAt": datetime.now(timezone.utc).isoformat(), "btcAmount": btc_amount, "usdtAmount": usdt_amount, "price": price, "note": note}
         await repo.create_buy(
+            tenant_id=tenant_id,
             buy_id=buy_id,
             source="manual",
             btc_amount=btc_amount,
@@ -127,13 +128,13 @@ class BtcCoreService:
         await repo.commit()
         return {"ok": True, "buy": row}
 
-    async def buy_preview(self, *, usdt_amount: float, reference_price: float | None, repo: BtcCoreRepository, secret: str) -> dict[str, Any]:
+    async def buy_preview(self, *, usdt_amount: float, reference_price: float | None, tenant_id: str, repo: BtcCoreRepository, secret: str) -> dict[str, Any]:
         if usdt_amount <= 0 or usdt_amount > 1000:
             raise HTTPException(status_code=400, detail="usdtAmount must be > 0 and <= 1000")
         if not reference_price or reference_price <= 0:
             _, klines = await analyzer_service.fetch_klines(symbol="BTCUSDT", interval="1d", limit=5, source="pionex", start_time=None, end_time=None)
             reference_price = klines[-1].close
-        buys = await repo.list_buys(limit=1000)
+        buys = await repo.list_buys(tenant_id=tenant_id, limit=1000)
         summary = self.summarize_buys(buys)
         avg_price = summary.get("averagePrice")
         delta_pct = (reference_price / avg_price - 1.0) if avg_price and avg_price > 0 else None
@@ -167,7 +168,7 @@ class BtcCoreService:
         }
 
     async def buy_execute(
-        self, *, token: str, api_key: str, api_secret: str, credentials_source: str, secret: str, repo: BtcCoreRepository
+        self, *, token: str, api_key: str, api_secret: str, credentials_source: str, secret: str, tenant_id: str, repo: BtcCoreRepository
     ) -> dict[str, Any]:
         token_payload = self._verify(token, secret)
         if token_payload.get("action") != "btc_core_spot_market_buy":
@@ -191,7 +192,7 @@ class BtcCoreService:
                 "request_body": request_body,
             }
         executed = self._extract_execution(result.raw_response or {}, fallback_usdt=self._safe_num(request_body.get("amount"), 0.0), fallback_price=self._safe_num(token_payload.get("referencePrice"), 0.0))
-        buy_id = f"btc-core-live-buy-{result.client_order_id or datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
+        buy_id = f"btc-core-live-buy-{result.client_order_id or datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{time.time_ns() % 1000000}"
         ledger = {
             "buyId": buy_id,
             "boughtAt": datetime.now(timezone.utc).isoformat(),
@@ -205,6 +206,7 @@ class BtcCoreService:
             "requestBody": request_body,
         }
         await repo.create_buy(
+            tenant_id=tenant_id,
             buy_id=buy_id,
             source="live",
             btc_amount=ledger["btcAmount"],

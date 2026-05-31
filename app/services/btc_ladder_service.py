@@ -73,8 +73,8 @@ class BtcLadderService:
             rows.append({"level": i, "discountPct": discount_pct, "price": level_price, "usdtAmount": usdt_alloc, "btcAmount": btc_size})
         return rows
 
-    async def dashboard(self, *, ladder_repo: BtcLadderRepository, core_repo: BtcCoreRepository) -> dict[str, Any]:
-        buys = await core_repo.list_buys(limit=1000)
+    async def dashboard(self, *, tenant_id: str, ladder_repo: BtcLadderRepository, core_repo: BtcCoreRepository) -> dict[str, Any]:
+        buys = await core_repo.list_buys(tenant_id=tenant_id, limit=1000)
         total_btc = sum(self._safe_num(r.get("btcAmount"), 0.0) for r in buys)
         total_usdt = sum(self._safe_num(r.get("usdtAmount"), 0.0) for r in buys)
         avg_price = total_usdt / total_btc if total_btc > 0 else None
@@ -82,7 +82,7 @@ class BtcLadderService:
         dca_usdt = sum(self._safe_num(r.get("usdtAmount"), 0.0) for r in buys if str(r.get("source")) in {"manual", "live"})
         ladder_btc = sum(self._safe_num(r.get("btcAmount"), 0.0) for r in buys if str(r.get("source")) in {"ladder_fill", "ladder_live"})
         ladder_usdt = sum(self._safe_num(r.get("usdtAmount"), 0.0) for r in buys if str(r.get("source")) in {"ladder_fill", "ladder_live"})
-        orders = await ladder_repo.list_orders(limit=50)
+        orders = await ladder_repo.list_orders(tenant_id=tenant_id, limit=50)
         return {
             "ok": True,
             "generatedAt": int(time.time() * 1000),
@@ -92,7 +92,7 @@ class BtcLadderService:
         }
 
     async def place_all(
-        self, *, capital_usdt: float, levels: int, max_dip_pct: float, api_key: str, api_secret: str, credentials_source: str, ladder_repo: BtcLadderRepository
+        self, *, capital_usdt: float, levels: int, max_dip_pct: float, api_key: str, api_secret: str, credentials_source: str, tenant_id: str, ladder_repo: BtcLadderRepository
     ) -> dict[str, Any]:
         keys_ok, key_error = validate_api_keys(api_key, api_secret)
         if not keys_ok:
@@ -120,6 +120,7 @@ class BtcLadderService:
                     placed_row = {**row, "status": "placed", "pionexOrderId": result.order_id, "clientOrderId": result.client_order_id, "requestBody": request_body, "orderId": order_id}
                     placed.append(placed_row)
                     await ladder_repo.create_order(
+                        tenant_id=tenant_id,
                         order_id=order_id,
                         price=row["price"],
                         usdt_amount=row["usdtAmount"],
@@ -168,7 +169,7 @@ class BtcLadderService:
         return {"ok": True, "canPlace": True, "confirmationToken": self._sign(token_payload, secret), "expiresAt": expires_at, "symbol": "BTC_USDT", "usdtAmount": round(usdt_amount, 2), "limitPrice": limit_price, "btcAmount": btc_size, "requestBody": request_body, "warning": "This will place a real Pionex spot LIMIT buy."}
 
     async def limit_execute(
-        self, *, token: str, api_key: str, api_secret: str, credentials_source: str, secret: str, ladder_repo: BtcLadderRepository
+        self, *, token: str, api_key: str, api_secret: str, credentials_source: str, secret: str, tenant_id: str, ladder_repo: BtcLadderRepository
     ) -> dict[str, Any]:
         token_payload = self._verify(token, secret)
         if token_payload.get("action") != "btc_ladder_spot_limit_buy":
@@ -188,6 +189,7 @@ class BtcLadderService:
         order_id = f"btc-ladder-order-{result.client_order_id or now.strftime('%Y%m%d-%H%M%S')}"
         order_row = {"orderId": order_id, "createdAt": now.isoformat(), "sourceType": "LADDER", "symbol": "BTC_USDT", "price": self._safe_num(token_payload.get("limitPrice"), 0.0), "usdtAmount": self._safe_num(token_payload.get("usdtAmount"), 0.0), "btcAmount": self._safe_num(token_payload.get("btcAmount"), 0.0), "status": "placed", "pionexOrderId": result.order_id, "clientOrderId": result.client_order_id, "requestBody": request_body}
         await ladder_repo.create_order(
+            tenant_id=tenant_id,
             order_id=order_id,
             price=order_row["price"],
             usdt_amount=order_row["usdtAmount"],
@@ -201,7 +203,7 @@ class BtcLadderService:
         return {"ok": True, "pionex_ordered": True, "credentials_source": credentials_source, "order": order_row}
 
     async def fill_confirm(
-        self, *, btc_amount: float, usdt_amount: float, price: float | None, note: str | None, core_repo: BtcCoreRepository
+        self, *, btc_amount: float, usdt_amount: float, price: float | None, note: str | None, tenant_id: str, core_repo: BtcCoreRepository
     ) -> dict[str, Any]:
         if btc_amount <= 0 and usdt_amount <= 0:
             raise HTTPException(status_code=400, detail="btcAmount or usdtAmount is required")
@@ -209,9 +211,10 @@ class BtcLadderService:
             btc_amount = usdt_amount / price
         if usdt_amount <= 0 and btc_amount > 0 and price and price > 0:
             usdt_amount = btc_amount * price
-        fill_id = f"btc-ladder-fill-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
+        fill_id = f"btc-ladder-fill-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{time.time_ns() % 1000000}"
         fill = {"fillId": fill_id, "boughtAt": datetime.now(timezone.utc).isoformat(), "sourceType": "LADDER", "btcAmount": btc_amount, "usdtAmount": usdt_amount, "price": price, "note": note}
         await core_repo.create_buy(
+            tenant_id=tenant_id,
             buy_id=fill_id,
             source="ladder_fill",
             btc_amount=btc_amount,

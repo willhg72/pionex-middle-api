@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import require_api_key
+from app.core.security import require_api_key, tenant_id_from_api_key
 from app.core.settings import get_settings
 from app.db.session import get_db_session
 from app.repositories.miner_ops_repository import MinerOpsRepository
@@ -28,20 +28,22 @@ def _is_upstream_429(exc: HTTPException) -> bool:
 @router.get("", response_model=MinersResponse)
 async def dashboard_miners(
     targetDailyUsdt: float = Query(1.0, gt=0),
+    x_api_key: str = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session),
 ) -> MinersResponse:
     settings = get_settings()
     api_key, api_secret, source = miners_service.resolve_credentials({}, settings.pionex_api_key, settings.pionex_api_secret)
     repo = MinerOpsRepository(db)
+    tenant_id = tenant_id_from_api_key(x_api_key)
     try:
         miners = await miners_service.list_miners(api_key=api_key, api_secret=api_secret, target_daily_usdt=targetDailyUsdt)
         for row in miners:
-            await repo.save_snapshot(row)
+            await repo.save_snapshot(row, tenant_id=tenant_id)
         await repo.commit()
     except HTTPException as exc:
         if not _is_upstream_429(exc):
             raise
-        cached = await repo.list_latest_snapshot_payloads(limit=400)
+        cached = await repo.list_latest_snapshot_payloads(tenant_id=tenant_id, limit=400)
         if not cached:
             raise
         return MinersResponse(ok=True, source=f"{source}:cache_fallback", miners=cached, count=len(cached))
@@ -53,20 +55,22 @@ async def dashboard_miners(
 async def dashboard_miners_with_credentials(
     payload: dict = Body(default_factory=dict),
     targetDailyUsdt: float = Query(1.0, gt=0),
+    x_api_key: str = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session),
 ) -> MinersResponse:
     settings = get_settings()
     api_key, api_secret, source = miners_service.resolve_credentials(payload, settings.pionex_api_key, settings.pionex_api_secret)
     repo = MinerOpsRepository(db)
+    tenant_id = tenant_id_from_api_key(x_api_key)
     try:
         miners = await miners_service.list_miners(api_key=api_key, api_secret=api_secret, target_daily_usdt=targetDailyUsdt)
         for row in miners:
-            await repo.save_snapshot(row)
+            await repo.save_snapshot(row, tenant_id=tenant_id)
         await repo.commit()
     except HTTPException as exc:
         if not _is_upstream_429(exc):
             raise
-        cached = await repo.list_latest_snapshot_payloads(limit=400)
+        cached = await repo.list_latest_snapshot_payloads(tenant_id=tenant_id, limit=400)
         if not cached:
             raise
         return MinersResponse(ok=True, source=f"{source}:cache_fallback", miners=cached, count=len(cached))
@@ -78,10 +82,11 @@ async def dashboard_miners_with_credentials(
 async def dashboard_miners_history(
     symbol: str | None = Query(None),
     limit: int = Query(100, ge=1, le=1000),
+    x_api_key: str = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session),
 ) -> MinerHistoryResponse:
     repo = MinerOpsRepository(db)
-    snapshots = await repo.list_snapshots(symbol=symbol, limit=limit)
+    snapshots = await repo.list_snapshots(tenant_id=tenant_id_from_api_key(x_api_key), symbol=symbol, limit=limit)
     return MinerHistoryResponse(ok=True, count=len(snapshots), snapshots=snapshots)
 
 
@@ -89,10 +94,11 @@ async def dashboard_miners_history(
 async def dashboard_miners_events(
     symbol: str | None = Query(None),
     limit: int = Query(100, ge=1, le=1000),
+    x_api_key: str = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session),
 ) -> MinerEventsResponse:
     repo = MinerOpsRepository(db)
-    events = await repo.list_events(symbol=symbol, limit=limit)
+    events = await repo.list_events(tenant_id=tenant_id_from_api_key(x_api_key), symbol=symbol, limit=limit)
     return MinerEventsResponse(ok=True, count=len(events), events=events)
 
 
@@ -115,7 +121,7 @@ async def dashboard_miner_close_preview(payload: MinerClosePreviewIn) -> MinerCl
 
 
 @router.post("/close", response_model=MinerCloseExecuteOut)
-async def dashboard_miner_close_execute(payload: MinerCloseExecuteIn, db: AsyncSession = Depends(get_db_session)) -> MinerCloseExecuteOut:
+async def dashboard_miner_close_execute(payload: MinerCloseExecuteIn, x_api_key: str = Depends(require_api_key), db: AsyncSession = Depends(get_db_session)) -> MinerCloseExecuteOut:
     settings = get_settings()
     token_payload = miners_service.verify_close_token(payload.confirmationToken, settings.miner_confirmation_secret)
 
@@ -132,6 +138,7 @@ async def dashboard_miner_close_execute(payload: MinerCloseExecuteIn, db: AsyncS
 
     repo = MinerOpsRepository(db)
     await repo.save_event(
+        tenant_id=tenant_id_from_api_key(x_api_key),
         bu_order_id=bu_order_id,
         symbol=symbol,
         event_type="miner_closed",

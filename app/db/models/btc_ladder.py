@@ -11,6 +11,7 @@ class BtcLadderOrder(Base):
     __tablename__ = "btc_ladder_orders"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(80), index=True, default="legacy")
     order_id: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     symbol: Mapped[str] = mapped_column(String(32), default="BTC_USDT", index=True)
     source_type: Mapped[str] = mapped_column(String(20), default="LADDER", index=True)

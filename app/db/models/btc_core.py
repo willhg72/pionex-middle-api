@@ -11,6 +11,7 @@ class BtcCoreBuy(Base):
     __tablename__ = "btc_core_buys"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(80), index=True, default="legacy")
     buy_id: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     source: Mapped[str] = mapped_column(String(40), index=True, default="manual")
     btc_amount: Mapped[float] = mapped_column(Float)

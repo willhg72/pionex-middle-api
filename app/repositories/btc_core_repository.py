@@ -14,6 +14,7 @@ class BtcCoreRepository:
     async def create_buy(
         self,
         *,
+        tenant_id: str,
         buy_id: str,
         source: str,
         btc_amount: float,
@@ -26,6 +27,7 @@ class BtcCoreRepository:
     ) -> None:
         self.session.add(
             BtcCoreBuy(
+                tenant_id=tenant_id,
                 buy_id=buy_id,
                 source=source,
                 btc_amount=btc_amount,
@@ -38,8 +40,12 @@ class BtcCoreRepository:
             )
         )
 
-    async def list_buys(self, limit: int = 500) -> list[dict[str, Any]]:
-        rows = (await self.session.execute(select(BtcCoreBuy).order_by(desc(BtcCoreBuy.created_at)).limit(limit))).scalars().all()
+    async def list_buys(self, *, tenant_id: str, limit: int = 500) -> list[dict[str, Any]]:
+        rows = (
+            await self.session.execute(
+                select(BtcCoreBuy).where(BtcCoreBuy.tenant_id == tenant_id).order_by(desc(BtcCoreBuy.created_at)).limit(limit)
+            )
+        ).scalars().all()
         return [
             {
                 "buyId": row.buy_id,
