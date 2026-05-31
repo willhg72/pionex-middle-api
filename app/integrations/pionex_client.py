@@ -27,6 +27,16 @@ class FuturesOrderResult:
     raw_response: dict[str, Any] | None = None
 
 
+@dataclass
+class SpotOrderResult:
+    success: bool
+    order_id: str | None = None
+    client_order_id: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    raw_response: dict[str, Any] | None = None
+
+
 class PionexClient:
     def __init__(self, api_key: str, api_secret: str) -> None:
         self.api_key = api_key.strip()
@@ -92,6 +102,23 @@ class PionexClient:
                 raw_response=data,
             )
         return FuturesOrderResult(
+            success=False,
+            error_code=str(data.get("code") or ""),
+            error_message=str(data.get("message") or "Unknown error"),
+            raw_response=data,
+        )
+
+    async def create_spot_order(self, body: dict[str, Any]) -> SpotOrderResult:
+        data = await self._signed_post("/api/v1/trade/order", body)
+        payload = data.get("data") if isinstance(data.get("data"), dict) else {}
+        if data.get("result"):
+            return SpotOrderResult(
+                success=True,
+                order_id=str(payload.get("orderId") or ""),
+                client_order_id=str(payload.get("clientOrderId") or body.get("clientOrderId") or ""),
+                raw_response=data,
+            )
+        return SpotOrderResult(
             success=False,
             error_code=str(data.get("code") or ""),
             error_message=str(data.get("message") or "Unknown error"),

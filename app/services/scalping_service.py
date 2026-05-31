@@ -193,6 +193,13 @@ class ScalpingService:
             return f"Volume quality gate failed: {vr:.2f}x < {gate['requiredRatio']:.2f}x", gate
         return None, gate
 
+    @staticmethod
+    def _mask_api_key_fingerprint(api_key: str) -> str:
+        text = str(api_key or "").strip()
+        if not text:
+            return ""
+        return f"{text[:3]}***{text[-3:]}"
+
     async def futures_capabilities(self, *, symbol: str, api_key: str, api_secret: str, credentials_source: str) -> dict[str, Any]:
         normalized = self.normalize_symbol(symbol)
         pionex_symbol = f"{normalized.removesuffix('USDT')}_USDT_PERP"
@@ -432,6 +439,168 @@ class ScalpingService:
 
         return {
             "ok": True,
+            "orderId": entry_result.order_id,
+            "clientOrderId": entry_result.client_order_id,
+            "monitorId": monitor_id,
+            "status": "monitor_started",
+        }
+
+    async def spot_preview(self, *, symbol: str, source: str, risk_usdt: float, api_key: str, api_secret: str, secret: str, credentials_source: str) -> dict[str, Any]:
+        keys_ok, key_error = validate_api_keys(api_key, api_secret)
+        blockers: list[str] = []
+        if not keys_ok:
+            blockers.append(key_error or "invalid credentials")
+
+        _, k5 = await analyzer_service.fetch_klines(symbol=symbol, interval="5m", limit=140, source=source, start_time=None, end_time=None)
+        _, k15 = await analyzer_service.fetch_klines(symbol=symbol, interval="15m", limit=140, source=source, start_time=None, end_time=None)
+        signal = self._signal_from_klines(symbol, k5, k15, risk_usdt, 1.0)
+
+        if signal.get("status") != "paper_candidate":
+            blockers.append("Signal is not paper_candidate")
+        if signal.get("direction") != "long":
+            blockers.append("Spot scalp supports long-only entries")
+
+        volume_blocker, volume_gate = self._volume_quality_blocker(signal)
+        if volume_blocker:
+            blockers.append(volume_blocker)
+
+        entry = float(signal.get("entry") or 0.0)
+        stop_loss = float(signal.get("stopLoss") or 0.0)
+        take_profit = float(signal.get("takeProfit1") or 0.0)
+        loss_per_unit = max(entry - stop_loss, 0.0)
+        qty = (risk_usdt / loss_per_unit) if loss_per_unit > 0 else 0.0
+        usdt_amount = qty * entry if entry > 0 else 0.0
+        if usdt_amount <= 0:
+            blockers.append("Could not derive a valid spot amount from risk and stop distance")
+
+        client_order_id = f"scalp-spot-{symbol.lower()}-{int(time.time())}"
+        request_body = {
+            "symbol": f"{symbol.removesuffix('USDT')}_USDT",
+            "side": "BUY",
+            "type": "MARKET",
+            "amount": f"{usdt_amount:.2f}",
+            "clientOrderId": client_order_id,
+        }
+
+        expires = int(time.time()) + 180
+        can_execute = len(blockers) == 0
+        order = {
+            "symbol": symbol,
+            "pionexSymbol": request_body["symbol"],
+            "side": "BUY",
+            "type": "MARKET",
+            "entryReference": entry,
+            "stopLoss": stop_loss,
+            "takeProfit1": take_profit,
+            "riskUsdt": risk_usdt,
+            "baseQtyEstimate": qty,
+            "quoteAmountUsdt": usdt_amount,
+            "requestBody": request_body,
+        }
+        payload = {
+            "action": "scalping_spot_preview",
+            "symbol": symbol,
+            "source": source,
+            "riskUsdt": risk_usdt,
+            "signal": signal,
+            "order": order,
+            "canExecute": can_execute,
+            "blockers": blockers,
+            "credentialsSource": credentials_source,
+            "apiKeyFingerprint": self._mask_api_key_fingerprint(api_key if keys_ok else ""),
+            "volumeGate": volume_gate,
+            "expiresAt": expires,
+        }
+        return {
+            "ok": True,
+            "mode": "spot_long_only",
+            "canExecute": can_execute,
+            "blockers": blockers,
+            "confirmationToken": self._sign(payload, secret),
+            "expiresAt": expires,
+            "signal": signal,
+            "order": order,
+            "credentialsSource": credentials_source,
+            "apiKeyFingerprint": self._mask_api_key_fingerprint(api_key if keys_ok else ""),
+            "volumeGate": volume_gate,
+            "warning": "Spot long-only POC ready. Exit is handled by backend monitor." if can_execute else "Spot real execution is blocked until all checks pass.",
+        }
+
+    async def spot_execute(self, *, token: str, api_key: str, api_secret: str, secret: str, credentials_source: str) -> dict[str, Any]:
+        payload = self._verify(token, secret)
+        if payload.get("action") != "scalping_spot_preview":
+            raise HTTPException(status_code=400, detail="Invalid token action")
+        if not payload.get("canExecute"):
+            raise HTTPException(status_code=409, detail="Spot scalping execution is blocked by preview checks")
+
+        order = payload.get("order") if isinstance(payload.get("order"), dict) else {}
+        request_body = order.get("requestBody") if isinstance(order.get("requestBody"), dict) else {}
+        signal = payload.get("signal") if isinstance(payload.get("signal"), dict) else {}
+        symbol = str(payload.get("symbol") or "")
+        source = str(payload.get("source") or "pionex")
+
+        client = PionexClient(api_key, api_secret)
+        try:
+            entry_result = await client.create_spot_order(request_body)
+        finally:
+            await client.close()
+        if not entry_result.success:
+            raise HTTPException(status_code=502, detail=entry_result.error_message or "Spot entry order failed")
+
+        monitor_id = f"spot-scalp-monitor-{int(time.time())}"
+        _SCALPING_MONITORS[monitor_id] = {
+            "monitorId": monitor_id,
+            "status": "active",
+            "mode": "spot_long_only",
+            "symbol": symbol,
+            "source": source,
+            "direction": "long",
+            "entrySignalSnapshot": signal,
+            "entryOrder": {
+                "orderId": entry_result.order_id,
+                "clientOrderId": entry_result.client_order_id,
+                "requestBody": request_body,
+                "response": entry_result.raw_response,
+            },
+            "stopLoss": order.get("stopLoss"),
+            "takeProfit": order.get("takeProfit1"),
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+            "credentialsSource": credentials_source,
+        }
+
+        async def monitor_loop() -> None:
+            for _ in range(120):
+                await asyncio.sleep(2)
+                rec = _SCALPING_MONITORS.get(monitor_id)
+                if not rec or rec.get("status") != "active":
+                    return
+                try:
+                    _, one = await analyzer_service.fetch_klines(symbol=symbol, interval="1m", limit=1, source=source, start_time=None, end_time=None)
+                    px = one[-1].close
+                    rec["lastPrice"] = px
+                    sl = float(rec.get("stopLoss") or 0.0)
+                    tp = float(rec.get("takeProfit") or 0.0)
+                    hit_sl = px <= sl
+                    hit_tp = px >= tp
+                    if hit_sl or hit_tp:
+                        rec["status"] = "closed"
+                        rec["triggeredBy"] = "take_profit" if hit_tp else "stop_loss"
+                        rec["endedAt"] = datetime.now(timezone.utc).isoformat()
+                        return
+                except Exception as exc:  # noqa: BLE001
+                    rec["status"] = "failed"
+                    rec["error"] = str(exc)
+                    rec["endedAt"] = datetime.now(timezone.utc).isoformat()
+                    return
+            rec = _SCALPING_MONITORS.get(monitor_id)
+            if rec and rec.get("status") == "active":
+                rec["status"] = "timeout"
+                rec["endedAt"] = datetime.now(timezone.utc).isoformat()
+
+        asyncio.create_task(monitor_loop())
+        return {
+            "ok": True,
+            "mode": "spot_long_only",
             "orderId": entry_result.order_id,
             "clientOrderId": entry_result.client_order_id,
             "monitorId": monitor_id,

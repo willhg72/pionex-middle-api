@@ -43,6 +43,45 @@ class ScalpingRealExecuteOut(BaseModel):
     status: str
 
 
+class ScalpingSpotPreviewIn(BaseModel):
+    symbol: str
+    source: str = "pionex"
+    riskUsdt: float = Field(gt=0, le=25)
+    leverage: float | None = None
+    api_key: str | None = None
+    api_secret: str | None = None
+
+
+class ScalpingSpotPreviewOut(BaseModel):
+    ok: bool
+    mode: str
+    canExecute: bool
+    blockers: list[str]
+    confirmationToken: str
+    expiresAt: int
+    signal: dict
+    order: dict
+    credentialsSource: str
+    apiKeyFingerprint: str
+    volumeGate: dict | None = None
+    warning: str | None = None
+
+
+class ScalpingSpotExecuteIn(BaseModel):
+    confirmationToken: str
+    api_key: str | None = None
+    api_secret: str | None = None
+
+
+class ScalpingSpotExecuteOut(BaseModel):
+    ok: bool
+    mode: str
+    orderId: str | None = None
+    clientOrderId: str | None = None
+    monitorId: str
+    status: str
+
+
 class ScalpingMonitorResponse(BaseModel):
     ok: bool
     monitor: dict

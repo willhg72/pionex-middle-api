@@ -10,6 +10,10 @@ from app.schemas.scalping.responses import (
     ScalpingRealExecuteOut,
     ScalpingRealPreviewIn,
     ScalpingRealPreviewOut,
+    ScalpingSpotExecuteIn,
+    ScalpingSpotExecuteOut,
+    ScalpingSpotPreviewIn,
+    ScalpingSpotPreviewOut,
     ScalpingSignalsResponse,
 )
 from app.services.miners_service import miners_service
@@ -38,7 +42,6 @@ async def scalping_futures_capabilities(
     settings = get_settings()
     cred_payload = {"api_key": api_key or "", "api_secret": api_secret or ""}
     resolved_key, resolved_secret, source = miners_service.resolve_credentials(cred_payload, settings.pionex_api_key, settings.pionex_api_secret)
-    valid, _ = miners_service.resolve_credentials(cred_payload, settings.pionex_api_key, settings.pionex_api_secret)
     keys_ok = bool(str(resolved_key).strip() and str(resolved_secret).strip())
     if not keys_ok:
         return ScalpingCapabilitiesResponse(
@@ -96,4 +99,36 @@ async def scalping_real_monitor(monitor_id: str) -> ScalpingMonitorResponse:
 @router.get("/real-monitors", response_model=ScalpingMonitorsResponse)
 async def scalping_real_monitors(limit: int = Query(20, ge=1, le=200)) -> ScalpingMonitorsResponse:
     return ScalpingMonitorsResponse(**scalping_service.monitors(limit))
+
+
+@router.post("/spot-preview", response_model=ScalpingSpotPreviewOut)
+async def scalping_spot_preview(payload: ScalpingSpotPreviewIn) -> ScalpingSpotPreviewOut:
+    settings = get_settings()
+    cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
+    api_key, api_secret, source = miners_service.resolve_credentials(cred_payload, settings.pionex_api_key, settings.pionex_api_secret)
+    result = await scalping_service.spot_preview(
+        symbol=scalping_service.normalize_symbol(payload.symbol),
+        source=payload.source,
+        risk_usdt=payload.riskUsdt,
+        api_key=api_key,
+        api_secret=api_secret,
+        secret=settings.miner_confirmation_secret,
+        credentials_source=source,
+    )
+    return ScalpingSpotPreviewOut(**result)
+
+
+@router.post("/spot-execute", response_model=ScalpingSpotExecuteOut)
+async def scalping_spot_execute(payload: ScalpingSpotExecuteIn) -> ScalpingSpotExecuteOut:
+    settings = get_settings()
+    cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
+    api_key, api_secret, source = miners_service.resolve_credentials(cred_payload, settings.pionex_api_key, settings.pionex_api_secret)
+    result = await scalping_service.spot_execute(
+        token=payload.confirmationToken,
+        api_key=api_key,
+        api_secret=api_secret,
+        secret=settings.miner_confirmation_secret,
+        credentials_source=source,
+    )
+    return ScalpingSpotExecuteOut(**result)
 
