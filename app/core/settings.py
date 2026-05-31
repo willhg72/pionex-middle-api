@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     pionex_api_secret: str = Field(default="", alias="API_SECRET")
     miner_confirmation_secret: str = "change-this-miner-confirmation-secret"
 
-    database_url: str = "sqlite+aiosqlite:///./runtime/pionex_middle.db"
+    database_url: str = "postgresql+asyncpg://insforge:change-me@localhost:5432/insforge"
     sql_echo: bool = False
     auto_create_schema: bool = False
 

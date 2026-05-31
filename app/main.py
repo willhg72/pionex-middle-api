@@ -19,6 +19,8 @@ from app.db.session import engine
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     settings = get_settings()
+    if settings.environment in {"staging", "prod"} and not settings.database_url.startswith("postgresql+asyncpg://"):
+        raise RuntimeError("DATABASE_URL must use postgresql+asyncpg in staging/prod.")
     if settings.auto_create_schema:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)

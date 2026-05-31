@@ -12,7 +12,7 @@
 - `API_KEY`: Pionex API key for default backend credentials
 - `API_SECRET`: Pionex API secret for default backend credentials
 - `MINER_CONFIRMATION_SECRET`: strong random secret for action confirmation tokens
-- `DATABASE_URL`: PostgreSQL URL (InsForge or Railway Postgres)
+- `DATABASE_URL`: PostgreSQL URL de InsForge (formato `postgresql+asyncpg://...`)
 
 ## Recommended Environment Variables
 - `ENVIRONMENT=prod`
