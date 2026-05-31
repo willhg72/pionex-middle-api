@@ -1,7 +1,17 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ScalpingSignalsResponse(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "ok": True,
+                "summary": {"evaluated": 40, "qualified": 2},
+                "signals": [{"symbol": "SOL_USDT_PERP", "side": "BUY", "confidence": 0.73}],
+                "errors": [],
+            }
+        }
+    )
     ok: bool
     summary: dict
     signals: list[dict]
@@ -9,6 +19,11 @@ class ScalpingSignalsResponse(BaseModel):
 
 
 class ScalpingRealPreviewIn(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {"symbol": "SOL_USDT_PERP", "source": "pionex", "riskUsdt": 8.0, "leverage": 5.0}
+        }
+    )
     symbol: str
     source: str = "pionex"
     riskUsdt: float = Field(gt=0, le=10)
@@ -30,6 +45,7 @@ class ScalpingRealPreviewOut(BaseModel):
 
 
 class ScalpingRealExecuteIn(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": {"confirmationToken": "scalp_real_prev_xxx"}})
     confirmationToken: str
     api_key: str | None = None
     api_secret: str | None = None
@@ -44,6 +60,11 @@ class ScalpingRealExecuteOut(BaseModel):
 
 
 class ScalpingSpotPreviewIn(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {"symbol": "BTC_USDT", "source": "pionex", "riskUsdt": 15.0, "leverage": None}
+        }
+    )
     symbol: str
     source: str = "pionex"
     riskUsdt: float = Field(gt=0, le=25)
@@ -68,6 +89,7 @@ class ScalpingSpotPreviewOut(BaseModel):
 
 
 class ScalpingSpotExecuteIn(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": {"confirmationToken": "scalp_spot_prev_xxx"}})
     confirmationToken: str
     api_key: str | None = None
     api_secret: str | None = None

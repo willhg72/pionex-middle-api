@@ -1,7 +1,19 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class BtcCoreResponse(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "ok": True,
+                "recommendationId": "btc_core_20260531_001",
+                "signals": {"drawdownPct": -4.2, "regime": "accumulate"},
+                "plan": {"nextBuyUsdt": 25.0},
+                "buyLedger": {"count": 37, "avgPrice": 62100.5},
+                "source": "pionex",
+            }
+        }
+    )
     ok: bool
     recommendationId: str
     signals: dict
@@ -23,6 +35,7 @@ class BtcCoreBuyOut(BaseModel):
 
 
 class BtcCoreBuyPreviewIn(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": {"usdtAmount": 30.0, "referencePrice": 64000.0}})
     usdtAmount: float = Field(gt=0, le=1000)
     referencePrice: float | None = Field(default=None, gt=0)
 
@@ -42,6 +55,7 @@ class BtcCoreBuyPreviewOut(BaseModel):
 
 
 class BtcCoreBuyExecuteIn(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": {"confirmationToken": "btc_core_buy_prev_xxx"}})
     confirmationToken: str
     api_key: str | None = None
     api_secret: str | None = None

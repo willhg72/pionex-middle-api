@@ -1,7 +1,24 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class OpportunitiesResponse(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "ok": True,
+                "summary": {"count": 3, "source": "pionex"},
+                "opportunities": [
+                    {
+                        "symbol": "ETH_USDT_PERP",
+                        "configKey": "robust_worker",
+                        "targetDailyUsdt": 1.0,
+                        "score": 0.78,
+                    }
+                ],
+                "errors": [],
+            }
+        }
+    )
     ok: bool
     summary: dict
     opportunities: list[dict]
@@ -9,6 +26,17 @@ class OpportunitiesResponse(BaseModel):
 
 
 class OpportunityCreatePreviewIn(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "symbol": "BTC_USDT_PERP",
+                "configKey": "robust_worker",
+                "capital": 120.0,
+                "targetDailyUsdt": 1.0,
+                "source": "pionex",
+            }
+        }
+    )
     symbol: str
     configKey: str
     capital: float = Field(gt=0)
@@ -17,6 +45,20 @@ class OpportunityCreatePreviewIn(BaseModel):
 
 
 class OpportunityCreatePreviewOut(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "ok": True,
+                "canCreate": True,
+                "blockers": [],
+                "confirmationToken": "opp_prev_tok_xxx",
+                "expiresAt": 1780200400,
+                "fingerprint": "fp_abc123",
+                "opportunity": {"symbol": "BTC_USDT_PERP", "score": 0.91},
+                "requestBody": {"symbol": "BTC_USDT_PERP", "capital": 120.0},
+            }
+        }
+    )
     ok: bool
     canCreate: bool
     blockers: list[str]
@@ -28,6 +70,18 @@ class OpportunityCreatePreviewOut(BaseModel):
 
 
 class OpportunityCreateIn(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "confirmationToken": "opp_prev_tok_xxx",
+                "symbol": "BTC_USDT_PERP",
+                "configKey": "robust_worker",
+                "capital": 120.0,
+                "targetDailyUsdt": 1.0,
+                "source": "pionex",
+            }
+        }
+    )
     confirmationToken: str
     symbol: str
     configKey: str
@@ -39,6 +93,18 @@ class OpportunityCreateIn(BaseModel):
 
 
 class OpportunityCreateOut(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "ok": True,
+                "pionex_created": True,
+                "bu_order_id": "BU123456789",
+                "error_code": None,
+                "error_message": None,
+                "request_body": {"symbol": "BTC_USDT_PERP"},
+            }
+        }
+    )
     ok: bool
     pionex_created: bool
     bu_order_id: str | None = None
