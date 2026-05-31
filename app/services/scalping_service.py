@@ -9,7 +9,9 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from app.db.session import SessionLocal
 from app.integrations.pionex_client import PionexClient
+from app.repositories.scalping_monitor_repository import ScalpingMonitorRepository
 from app.services.analyzer_service import analyzer_service
 from app.services.miners_utils import validate_api_keys
 
@@ -364,7 +366,7 @@ class ScalpingService:
             "capabilities": capabilities,
         }
 
-    async def real_execute(self, *, token: str, api_key: str, api_secret: str, secret: str) -> dict[str, Any]:
+    async def real_execute(self, *, token: str, api_key: str, api_secret: str, secret: str, tenant_id: str) -> dict[str, Any]:
         payload = self._verify(token, secret)
         if payload.get("action") != "scalping_real_preview":
             raise HTTPException(status_code=400, detail="Invalid token action")
@@ -403,7 +405,12 @@ class ScalpingService:
             "stopLoss": signal.get("stopLoss"),
             "takeProfit": signal.get("takeProfit1"),
             "createdAt": datetime.now(timezone.utc).isoformat(),
+            "tenantId": tenant_id,
         }
+        async with SessionLocal() as session:
+            repo = ScalpingMonitorRepository(session)
+            await repo.create(tenant_id=tenant_id, monitor=_SCALPING_MONITORS[monitor_id])
+            await repo.commit()
 
         async def monitor_loop() -> None:
             for _ in range(120):
@@ -424,16 +431,28 @@ class ScalpingService:
                         rec["status"] = "closed"
                         rec["triggeredBy"] = "take_profit" if hit_tp else "stop_loss"
                         rec["endedAt"] = datetime.now(timezone.utc).isoformat()
+                        async with SessionLocal() as session:
+                            repo = ScalpingMonitorRepository(session)
+                            await repo.update_from_payload(tenant_id=tenant_id, monitor_id=monitor_id, payload=rec)
+                            await repo.commit()
                         return
                 except Exception as exc:  # noqa: BLE001
                     rec["status"] = "failed"
                     rec["error"] = str(exc)
                     rec["endedAt"] = datetime.now(timezone.utc).isoformat()
+                    async with SessionLocal() as session:
+                        repo = ScalpingMonitorRepository(session)
+                        await repo.update_from_payload(tenant_id=tenant_id, monitor_id=monitor_id, payload=rec)
+                        await repo.commit()
                     return
             rec = _SCALPING_MONITORS.get(monitor_id)
             if rec and rec.get("status") == "active":
                 rec["status"] = "timeout"
                 rec["endedAt"] = datetime.now(timezone.utc).isoformat()
+                async with SessionLocal() as session:
+                    repo = ScalpingMonitorRepository(session)
+                    await repo.update_from_payload(tenant_id=tenant_id, monitor_id=monitor_id, payload=rec)
+                    await repo.commit()
 
         asyncio.create_task(monitor_loop())
 
@@ -526,7 +545,7 @@ class ScalpingService:
             "warning": "Spot long-only POC ready. Exit is handled by backend monitor." if can_execute else "Spot real execution is blocked until all checks pass.",
         }
 
-    async def spot_execute(self, *, token: str, api_key: str, api_secret: str, secret: str, credentials_source: str) -> dict[str, Any]:
+    async def spot_execute(self, *, token: str, api_key: str, api_secret: str, secret: str, credentials_source: str, tenant_id: str) -> dict[str, Any]:
         payload = self._verify(token, secret)
         if payload.get("action") != "scalping_spot_preview":
             raise HTTPException(status_code=400, detail="Invalid token action")
@@ -566,7 +585,12 @@ class ScalpingService:
             "takeProfit": order.get("takeProfit1"),
             "createdAt": datetime.now(timezone.utc).isoformat(),
             "credentialsSource": credentials_source,
+            "tenantId": tenant_id,
         }
+        async with SessionLocal() as session:
+            repo = ScalpingMonitorRepository(session)
+            await repo.create(tenant_id=tenant_id, monitor=_SCALPING_MONITORS[monitor_id])
+            await repo.commit()
 
         async def monitor_loop() -> None:
             for _ in range(120):
@@ -586,16 +610,28 @@ class ScalpingService:
                         rec["status"] = "closed"
                         rec["triggeredBy"] = "take_profit" if hit_tp else "stop_loss"
                         rec["endedAt"] = datetime.now(timezone.utc).isoformat()
+                        async with SessionLocal() as session:
+                            repo = ScalpingMonitorRepository(session)
+                            await repo.update_from_payload(tenant_id=tenant_id, monitor_id=monitor_id, payload=rec)
+                            await repo.commit()
                         return
                 except Exception as exc:  # noqa: BLE001
                     rec["status"] = "failed"
                     rec["error"] = str(exc)
                     rec["endedAt"] = datetime.now(timezone.utc).isoformat()
+                    async with SessionLocal() as session:
+                        repo = ScalpingMonitorRepository(session)
+                        await repo.update_from_payload(tenant_id=tenant_id, monitor_id=monitor_id, payload=rec)
+                        await repo.commit()
                     return
             rec = _SCALPING_MONITORS.get(monitor_id)
             if rec and rec.get("status") == "active":
                 rec["status"] = "timeout"
                 rec["endedAt"] = datetime.now(timezone.utc).isoformat()
+                async with SessionLocal() as session:
+                    repo = ScalpingMonitorRepository(session)
+                    await repo.update_from_payload(tenant_id=tenant_id, monitor_id=monitor_id, payload=rec)
+                    await repo.commit()
 
         asyncio.create_task(monitor_loop())
         return {
@@ -607,16 +643,26 @@ class ScalpingService:
             "status": "monitor_started",
         }
 
-    def monitor_status(self, monitor_id: str) -> dict[str, Any]:
+    async def monitor_status(self, monitor_id: str, tenant_id: str) -> dict[str, Any]:
         row = _SCALPING_MONITORS.get(monitor_id)
-        if not row:
+        if row and str(row.get("tenantId") or "") == tenant_id:
+            return {"ok": True, "monitor": row}
+        async with SessionLocal() as session:
+            repo = ScalpingMonitorRepository(session)
+            persisted = await repo.get(tenant_id=tenant_id, monitor_id=monitor_id)
+        if not persisted:
             raise HTTPException(status_code=404, detail="Monitor not found")
-        return {"ok": True, "monitor": row}
+        return {"ok": True, "monitor": persisted}
 
-    def monitors(self, limit: int) -> dict[str, Any]:
-        rows = list(_SCALPING_MONITORS.values())
-        rows.sort(key=lambda r: str(r.get("createdAt") or ""), reverse=True)
-        return {"ok": True, "count": len(rows), "monitors": rows[:limit]}
+    async def monitors(self, limit: int, tenant_id: str) -> dict[str, Any]:
+        memory_rows = [r for r in _SCALPING_MONITORS.values() if str(r.get("tenantId") or "") == tenant_id]
+        if memory_rows:
+            memory_rows.sort(key=lambda r: str(r.get("createdAt") or ""), reverse=True)
+            return {"ok": True, "count": len(memory_rows), "monitors": memory_rows[:limit]}
+        async with SessionLocal() as session:
+            repo = ScalpingMonitorRepository(session)
+            persisted = await repo.list_recent(tenant_id=tenant_id, limit=limit)
+        return {"ok": True, "count": len(persisted), "monitors": persisted}
 
 
 scalping_service = ScalpingService()

@@ -1,3 +1,5 @@
+import hashlib
+
 from fastapi import APIRouter, Depends, Query
 
 from app.core.security import require_api_key
@@ -20,6 +22,11 @@ from app.services.miners_service import miners_service
 from app.services.scalping_service import scalping_service
 
 router = APIRouter(prefix="/scalping", dependencies=[Depends(require_api_key)])
+
+
+def _tenant_id_from_key(api_key: str) -> str:
+    digest = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+    return f"tenant_{digest[:24]}"
 
 
 @router.get("/signals", response_model=ScalpingSignalsResponse)
@@ -78,7 +85,7 @@ async def scalping_real_preview(payload: ScalpingRealPreviewIn) -> ScalpingRealP
 
 
 @router.post("/real-execute", response_model=ScalpingRealExecuteOut)
-async def scalping_real_execute(payload: ScalpingRealExecuteIn) -> ScalpingRealExecuteOut:
+async def scalping_real_execute(payload: ScalpingRealExecuteIn, x_api_key: str = Depends(require_api_key)) -> ScalpingRealExecuteOut:
     settings = get_settings()
     cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
     api_key, api_secret, _ = miners_service.resolve_credentials(cred_payload, settings.pionex_api_key, settings.pionex_api_secret)
@@ -87,18 +94,19 @@ async def scalping_real_execute(payload: ScalpingRealExecuteIn) -> ScalpingRealE
         api_key=api_key,
         api_secret=api_secret,
         secret=settings.miner_confirmation_secret,
+        tenant_id=_tenant_id_from_key(x_api_key),
     )
     return ScalpingRealExecuteOut(**result)
 
 
 @router.get("/real-monitor/{monitor_id}", response_model=ScalpingMonitorResponse)
-async def scalping_real_monitor(monitor_id: str) -> ScalpingMonitorResponse:
-    return ScalpingMonitorResponse(**scalping_service.monitor_status(monitor_id))
+async def scalping_real_monitor(monitor_id: str, x_api_key: str = Depends(require_api_key)) -> ScalpingMonitorResponse:
+    return ScalpingMonitorResponse(**(await scalping_service.monitor_status(monitor_id, _tenant_id_from_key(x_api_key))))
 
 
 @router.get("/real-monitors", response_model=ScalpingMonitorsResponse)
-async def scalping_real_monitors(limit: int = Query(20, ge=1, le=200)) -> ScalpingMonitorsResponse:
-    return ScalpingMonitorsResponse(**scalping_service.monitors(limit))
+async def scalping_real_monitors(limit: int = Query(20, ge=1, le=200), x_api_key: str = Depends(require_api_key)) -> ScalpingMonitorsResponse:
+    return ScalpingMonitorsResponse(**(await scalping_service.monitors(limit, _tenant_id_from_key(x_api_key))))
 
 
 @router.post("/spot-preview", response_model=ScalpingSpotPreviewOut)
@@ -119,7 +127,7 @@ async def scalping_spot_preview(payload: ScalpingSpotPreviewIn) -> ScalpingSpotP
 
 
 @router.post("/spot-execute", response_model=ScalpingSpotExecuteOut)
-async def scalping_spot_execute(payload: ScalpingSpotExecuteIn) -> ScalpingSpotExecuteOut:
+async def scalping_spot_execute(payload: ScalpingSpotExecuteIn, x_api_key: str = Depends(require_api_key)) -> ScalpingSpotExecuteOut:
     settings = get_settings()
     cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
     api_key, api_secret, source = miners_service.resolve_credentials(cred_payload, settings.pionex_api_key, settings.pionex_api_secret)
@@ -129,6 +137,7 @@ async def scalping_spot_execute(payload: ScalpingSpotExecuteIn) -> ScalpingSpotE
         api_secret=api_secret,
         secret=settings.miner_confirmation_secret,
         credentials_source=source,
+        tenant_id=_tenant_id_from_key(x_api_key),
     )
     return ScalpingSpotExecuteOut(**result)
 
