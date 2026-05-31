@@ -73,5 +73,21 @@ class MinerOpsRepository:
             for row in rows
         ]
 
+    async def list_latest_snapshot_payloads(self, *, limit: int = 400) -> list[dict[str, Any]]:
+        stmt = select(MinerSnapshot).order_by(desc(MinerSnapshot.created_at)).limit(limit)
+        rows = (await self.session.execute(stmt)).scalars().all()
+        latest_by_order: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            key = str(row.bu_order_id or "")
+            if not key or key in latest_by_order:
+                continue
+            try:
+                payload = json.loads(row.payload_json or "{}")
+            except Exception:
+                payload = {}
+            if isinstance(payload, dict) and payload:
+                latest_by_order[key] = payload
+        return list(latest_by_order.values())
+
     async def commit(self) -> None:
         await self.session.commit()

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Body, Depends, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import require_api_key
@@ -20,6 +20,11 @@ from app.services.miners_service import miners_service
 router = APIRouter(prefix="/dashboard/miners", dependencies=[Depends(require_api_key)])
 
 
+def _is_upstream_429(exc: HTTPException) -> bool:
+    detail = str(exc.detail or "")
+    return exc.status_code == 502 and "429" in detail
+
+
 @router.get("", response_model=MinersResponse)
 async def dashboard_miners(
     targetDailyUsdt: float = Query(1.0, gt=0),
@@ -27,12 +32,19 @@ async def dashboard_miners(
 ) -> MinersResponse:
     settings = get_settings()
     api_key, api_secret, source = miners_service.resolve_credentials({}, settings.pionex_api_key, settings.pionex_api_secret)
-    miners = await miners_service.list_miners(api_key=api_key, api_secret=api_secret, target_daily_usdt=targetDailyUsdt)
-
     repo = MinerOpsRepository(db)
-    for row in miners:
-        await repo.save_snapshot(row)
-    await repo.commit()
+    try:
+        miners = await miners_service.list_miners(api_key=api_key, api_secret=api_secret, target_daily_usdt=targetDailyUsdt)
+        for row in miners:
+            await repo.save_snapshot(row)
+        await repo.commit()
+    except HTTPException as exc:
+        if not _is_upstream_429(exc):
+            raise
+        cached = await repo.list_latest_snapshot_payloads(limit=400)
+        if not cached:
+            raise
+        return MinersResponse(ok=True, source=f"{source}:cache_fallback", miners=cached, count=len(cached))
 
     return MinersResponse(ok=True, source=source, miners=miners, count=len(miners))
 
@@ -45,12 +57,19 @@ async def dashboard_miners_with_credentials(
 ) -> MinersResponse:
     settings = get_settings()
     api_key, api_secret, source = miners_service.resolve_credentials(payload, settings.pionex_api_key, settings.pionex_api_secret)
-    miners = await miners_service.list_miners(api_key=api_key, api_secret=api_secret, target_daily_usdt=targetDailyUsdt)
-
     repo = MinerOpsRepository(db)
-    for row in miners:
-        await repo.save_snapshot(row)
-    await repo.commit()
+    try:
+        miners = await miners_service.list_miners(api_key=api_key, api_secret=api_secret, target_daily_usdt=targetDailyUsdt)
+        for row in miners:
+            await repo.save_snapshot(row)
+        await repo.commit()
+    except HTTPException as exc:
+        if not _is_upstream_429(exc):
+            raise
+        cached = await repo.list_latest_snapshot_payloads(limit=400)
+        if not cached:
+            raise
+        return MinersResponse(ok=True, source=f"{source}:cache_fallback", miners=cached, count=len(cached))
 
     return MinersResponse(ok=True, source=source, miners=miners, count=len(miners))
 

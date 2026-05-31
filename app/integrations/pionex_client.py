@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import time
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
@@ -69,16 +70,48 @@ class PionexClient:
         return query, signature
 
     async def _signed_post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
-        query, signature = self._generate_signature("POST", path, body)
-        headers = {"PIONEX-KEY": self.api_key, "PIONEX-SIGNATURE": signature}
-        response = await self.client.post(f"{path}?{query}", headers=headers, json=body)
-        return self._safe_json(response)
+        attempts = 3
+        for idx in range(attempts):
+            query, signature = self._generate_signature("POST", path, body)
+            headers = {"PIONEX-KEY": self.api_key, "PIONEX-SIGNATURE": signature}
+            try:
+                response = await self.client.post(f"{path}?{query}", headers=headers, json=body)
+            except httpx.HTTPError as exc:
+                if idx == attempts - 1:
+                    return {"result": False, "code": "HTTP_ERROR", "message": str(exc)}
+                await asyncio.sleep(0.6 * (idx + 1))
+                continue
+
+            if response.status_code == 429 and idx < attempts - 1:
+                await asyncio.sleep(0.8 * (idx + 1))
+                continue
+            if response.status_code >= 500 and idx < attempts - 1:
+                await asyncio.sleep(0.6 * (idx + 1))
+                continue
+            return self._safe_json(response)
+        return {"result": False, "code": "429", "message": "Upstream rate limit (429)"}
 
     async def _signed_get(self, path: str, query_params: dict[str, Any] | None = None) -> dict[str, Any]:
-        query, signature = self._generate_signature("GET", path, {}, extra_query=query_params)
-        headers = {"PIONEX-KEY": self.api_key, "PIONEX-SIGNATURE": signature}
-        response = await self.client.get(f"{path}?{query}", headers=headers)
-        return self._safe_json(response)
+        attempts = 3
+        for idx in range(attempts):
+            query, signature = self._generate_signature("GET", path, {}, extra_query=query_params)
+            headers = {"PIONEX-KEY": self.api_key, "PIONEX-SIGNATURE": signature}
+            try:
+                response = await self.client.get(f"{path}?{query}", headers=headers)
+            except httpx.HTTPError as exc:
+                if idx == attempts - 1:
+                    return {"result": False, "code": "HTTP_ERROR", "message": str(exc)}
+                await asyncio.sleep(0.6 * (idx + 1))
+                continue
+
+            if response.status_code == 429 and idx < attempts - 1:
+                await asyncio.sleep(0.8 * (idx + 1))
+                continue
+            if response.status_code >= 500 and idx < attempts - 1:
+                await asyncio.sleep(0.6 * (idx + 1))
+                continue
+            return self._safe_json(response)
+        return {"result": False, "code": "429", "message": "Upstream rate limit (429)"}
 
     async def get_bot_orders(self) -> dict[str, Any]:
         return await self._signed_get("/api/v1/bot/orders")
@@ -172,6 +205,8 @@ class PionexClient:
 
     @staticmethod
     def _safe_json(response: httpx.Response) -> dict[str, Any]:
+        if response.status_code == 429:
+            return {"result": False, "code": "429", "message": "Upstream rate limit (429)"}
         try:
             payload = response.json()
             if isinstance(payload, dict):
