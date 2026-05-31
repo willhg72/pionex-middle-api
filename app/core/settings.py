@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     api_key_header_name: str = "X-API-Key"
     api_keys: list[str] = Field(default_factory=list)
 
+    pionex_api_key: str = Field(default="", alias="API_KEY")
+    pionex_api_secret: str = Field(default="", alias="API_SECRET")
+    miner_confirmation_secret: str = "change-this-miner-confirmation-secret"
+
     database_url: str = "sqlite+aiosqlite:///./runtime/pionex_middle.db"
     sql_echo: bool = False
 
@@ -32,7 +36,6 @@ class Settings(BaseSettings):
 
 
 @lru_cache
-
 def get_settings() -> Settings:
     return Settings()
 

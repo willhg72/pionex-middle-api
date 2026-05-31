@@ -4,7 +4,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import router as api_v1_router
+from app.core.exceptions import register_exception_handlers
 from app.core.settings import configure_logging, get_settings
+from app.db import models as _models  # noqa: F401
 from app.db.base import Base
 from app.db.session import engine
 
@@ -36,6 +38,8 @@ def create_app() -> FastAPI:
         allow_methods=settings.cors_allow_methods,
         allow_headers=settings.cors_allow_headers,
     )
+
+    register_exception_handlers(app)
 
     @app.get("/")
     async def root() -> dict:
