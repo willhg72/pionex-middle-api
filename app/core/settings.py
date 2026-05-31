@@ -28,6 +28,7 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite+aiosqlite:///./runtime/pionex_middle.db"
     sql_echo: bool = False
+    auto_create_schema: bool = False
 
     cors_allow_origins: list[str] = Field(default_factory=lambda: ["*"])
     cors_allow_credentials: bool = False
