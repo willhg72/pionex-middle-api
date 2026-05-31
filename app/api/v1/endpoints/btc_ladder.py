@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import require_api_key, tenant_id_from_api_key
@@ -6,6 +6,7 @@ from app.core.settings import get_settings
 from app.db.session import get_db_session
 from app.repositories.btc_core_repository import BtcCoreRepository
 from app.repositories.btc_ladder_repository import BtcLadderRepository
+from app.repositories.idempotency_repository import IdempotencyRepository
 from app.schemas.btc_ladder.responses import (
     BtcLadderCancelAllIn,
     BtcLadderCancelAllOut,
@@ -80,19 +81,35 @@ async def dashboard_btc_ladder_limit_preview(payload: BtcLadderLimitPreviewIn) -
 
 
 @router.post("/limit-execute", response_model=BtcLadderLimitExecuteOut)
-async def dashboard_btc_ladder_limit_execute(payload: BtcLadderLimitExecuteIn, x_api_key: str = Depends(require_api_key), db: AsyncSession = Depends(get_db_session)) -> BtcLadderLimitExecuteOut:
+async def dashboard_btc_ladder_limit_execute(
+    payload: BtcLadderLimitExecuteIn,
+    x_api_key: str = Depends(require_api_key),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    db: AsyncSession = Depends(get_db_session),
+) -> BtcLadderLimitExecuteOut:
     settings = get_settings()
     cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
     api_key, api_secret, source = miners_service.resolve_credentials(cred_payload, settings.pionex_api_key, settings.pionex_api_secret)
+    tenant_id = tenant_id_from_api_key(x_api_key)
+    idem_repo = IdempotencyRepository(db)
+    if idempotency_key:
+        cached = await idem_repo.get(tenant_id=tenant_id, scope="btc_ladder_limit_execute", idem_key=idempotency_key)
+        if cached:
+            _, cached_payload = cached
+            return BtcLadderLimitExecuteOut(**cached_payload)
+
     result = await btc_ladder_service.limit_execute(
         token=payload.confirmationToken,
         api_key=api_key,
         api_secret=api_secret,
         credentials_source=source,
         secret=settings.miner_confirmation_secret,
-        tenant_id=tenant_id_from_api_key(x_api_key),
+        tenant_id=tenant_id,
         ladder_repo=BtcLadderRepository(db),
     )
+    if idempotency_key:
+        await idem_repo.save(tenant_id=tenant_id, scope="btc_ladder_limit_execute", idem_key=idempotency_key, status_code=200, response=result)
+        await idem_repo.commit()
     return BtcLadderLimitExecuteOut(**result)
 
 

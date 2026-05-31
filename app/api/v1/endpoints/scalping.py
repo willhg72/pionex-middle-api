@@ -1,9 +1,11 @@
 import hashlib
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, Query
 
 from app.core.security import require_api_key
 from app.core.settings import get_settings
+from app.db.session import SessionLocal
+from app.repositories.idempotency_repository import IdempotencyRepository
 from app.schemas.scalping.responses import (
     ScalpingCapabilitiesResponse,
     ScalpingMonitorResponse,
@@ -85,17 +87,34 @@ async def scalping_real_preview(payload: ScalpingRealPreviewIn) -> ScalpingRealP
 
 
 @router.post("/real-execute", response_model=ScalpingRealExecuteOut)
-async def scalping_real_execute(payload: ScalpingRealExecuteIn, x_api_key: str = Depends(require_api_key)) -> ScalpingRealExecuteOut:
+async def scalping_real_execute(
+    payload: ScalpingRealExecuteIn,
+    x_api_key: str = Depends(require_api_key),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> ScalpingRealExecuteOut:
     settings = get_settings()
     cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
     api_key, api_secret, _ = miners_service.resolve_credentials(cred_payload, settings.pionex_api_key, settings.pionex_api_secret)
+    tenant_id = _tenant_id_from_key(x_api_key)
+    if idempotency_key:
+        async with SessionLocal() as session:
+            idem_repo = IdempotencyRepository(session)
+            cached = await idem_repo.get(tenant_id=tenant_id, scope="scalping_real_execute", idem_key=idempotency_key)
+            if cached:
+                _, cached_payload = cached
+                return ScalpingRealExecuteOut(**cached_payload)
     result = await scalping_service.real_execute(
         token=payload.confirmationToken,
         api_key=api_key,
         api_secret=api_secret,
         secret=settings.miner_confirmation_secret,
-        tenant_id=_tenant_id_from_key(x_api_key),
+        tenant_id=tenant_id,
     )
+    if idempotency_key:
+        async with SessionLocal() as session:
+            idem_repo = IdempotencyRepository(session)
+            await idem_repo.save(tenant_id=tenant_id, scope="scalping_real_execute", idem_key=idempotency_key, status_code=200, response=result)
+            await idem_repo.commit()
     return ScalpingRealExecuteOut(**result)
 
 
@@ -127,17 +146,35 @@ async def scalping_spot_preview(payload: ScalpingSpotPreviewIn) -> ScalpingSpotP
 
 
 @router.post("/spot-execute", response_model=ScalpingSpotExecuteOut)
-async def scalping_spot_execute(payload: ScalpingSpotExecuteIn, x_api_key: str = Depends(require_api_key)) -> ScalpingSpotExecuteOut:
+async def scalping_spot_execute(
+    payload: ScalpingSpotExecuteIn,
+    x_api_key: str = Depends(require_api_key),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> ScalpingSpotExecuteOut:
     settings = get_settings()
     cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
     api_key, api_secret, source = miners_service.resolve_credentials(cred_payload, settings.pionex_api_key, settings.pionex_api_secret)
+    tenant_id = _tenant_id_from_key(x_api_key)
+    if idempotency_key:
+        async with SessionLocal() as session:
+            idem_repo = IdempotencyRepository(session)
+            cached = await idem_repo.get(tenant_id=tenant_id, scope="scalping_spot_execute", idem_key=idempotency_key)
+            if cached:
+                _, cached_payload = cached
+                return ScalpingSpotExecuteOut(**cached_payload)
+
     result = await scalping_service.spot_execute(
         token=payload.confirmationToken,
         api_key=api_key,
         api_secret=api_secret,
         secret=settings.miner_confirmation_secret,
         credentials_source=source,
-        tenant_id=_tenant_id_from_key(x_api_key),
+        tenant_id=tenant_id,
     )
+    if idempotency_key:
+        async with SessionLocal() as session:
+            idem_repo = IdempotencyRepository(session)
+            await idem_repo.save(tenant_id=tenant_id, scope="scalping_spot_execute", idem_key=idempotency_key, status_code=200, response=result)
+            await idem_repo.commit()
     return ScalpingSpotExecuteOut(**result)
 
