@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import router as api_v1_router
 from app.api.v1.endpoints.scalping import router as scalping_router
+from app.api.v1.endpoints.discovery import router as discovery_router
 from app.core.exceptions import register_exception_handlers
 from app.core.middleware import register_middlewares
 from app.core.settings import configure_logging, get_settings
@@ -56,6 +57,7 @@ def create_app() -> FastAPI:
 
     app.include_router(api_v1_router, prefix=settings.api_v1_prefix)
     app.include_router(scalping_router, prefix="/api")
+    app.include_router(discovery_router, prefix="/api")
     return app
 
 
