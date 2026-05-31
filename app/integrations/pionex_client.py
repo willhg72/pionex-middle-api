@@ -37,6 +37,15 @@ class SpotOrderResult:
     raw_response: dict[str, Any] | None = None
 
 
+@dataclass
+class SpotCancelResult:
+    success: bool
+    order_id: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    raw_response: dict[str, Any] | None = None
+
+
 class PionexClient:
     def __init__(self, api_key: str, api_secret: str) -> None:
         self.api_key = api_key.strip()
@@ -120,6 +129,26 @@ class PionexClient:
             )
         return SpotOrderResult(
             success=False,
+            error_code=str(data.get("code") or ""),
+            error_message=str(data.get("message") or "Unknown error"),
+            raw_response=data,
+        )
+
+    async def get_spot_open_orders(self, symbol: str | None = None) -> dict[str, Any]:
+        params = {"symbol": symbol} if symbol else None
+        return await self._signed_get("/api/v1/trade/openOrders", params)
+
+    async def cancel_spot_order(self, order_id: str) -> SpotCancelResult:
+        data = await self._signed_post("/api/v1/trade/cancel", {"orderId": str(order_id)})
+        if data.get("result"):
+            return SpotCancelResult(
+                success=True,
+                order_id=str(order_id),
+                raw_response=data,
+            )
+        return SpotCancelResult(
+            success=False,
+            order_id=str(order_id),
             error_code=str(data.get("code") or ""),
             error_message=str(data.get("message") or "Unknown error"),
             raw_response=data,
