@@ -34,6 +34,7 @@ Exchange soportado: `Pionex` (Toobit retirado)
 - `GET /api/v1/dashboard/opportunities`
 - `POST /api/v1/dashboard/opportunities/create-preview`
 - `POST /api/v1/dashboard/opportunities/create`
+- `POST /api/v1/dashboard/opportunities/technical-gate`
 
 ### Miners
 
@@ -85,6 +86,7 @@ Exchange soportado: `Pionex` (Toobit retirado)
 ## Alias legacy `/api` (compatibilidad temporal)
 
 - `GET /api/dashboard/discovery`
+- `POST /api/dashboard/opportunities/technical-gate`
 - `GET /api/dashboard/btc-core`
 - `POST /api/dashboard/btc-core/buy-preview`
 - `POST /api/dashboard/btc-core/buy-execute`

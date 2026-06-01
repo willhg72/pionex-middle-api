@@ -306,5 +306,191 @@ class OpportunitiesService:
             "request_body": preview["requestBody"],
         }
 
+    async def build_technical_gate(
+        self, *, symbol: str, config_key: str, source: str, capital: float, target_daily_usdt: float
+    ) -> dict[str, Any]:
+        rows = await self.list_opportunities(
+            universe=symbol,
+            capital=capital,
+            source=source,
+            target_daily_usdt=target_daily_usdt,
+        )
+        candidate = next(
+            (
+                x
+                for x in rows.get("opportunities", [])
+                if str(x.get("symbol") or "").upper() == symbol.upper() and str(x.get("configKey") or "") == config_key
+            ),
+            None,
+        )
+        if not candidate:
+            raise HTTPException(status_code=404, detail="Opportunity row not found")
+
+        resolved_source, d1 = await analyzer_service.fetch_klines(
+            symbol=symbol.upper(),
+            interval="1d",
+            limit=180,
+            source=source,
+            start_time=None,
+            end_time=None,
+        )
+        closes = [k.close for k in d1]
+        highs = [k.high for k in d1]
+        lows = [k.low for k in d1]
+        if len(closes) < 30:
+            raise HTTPException(status_code=502, detail="Insufficient daily klines for technical gate")
+
+        px = float(closes[-1])
+        hi_30, lo_30 = max(highs[-30:]), min(lows[-30:])
+        hi_90, lo_90 = max(highs[-90:]), min(lows[-90:])
+        hi_180, lo_180 = max(highs), min(lows)
+        rp_30 = (px - lo_30) / (hi_30 - lo_30) if hi_30 > lo_30 else 0.5
+        rp_90 = (px - lo_90) / (hi_90 - lo_90) if hi_90 > lo_90 else 0.5
+        edge_distance = min(rp_30, 1 - rp_30)
+        chg_3 = (px / closes[-4] - 1) * 100 if len(closes) >= 4 and closes[-4] else 0.0
+        chg_7 = (px / closes[-8] - 1) * 100 if len(closes) >= 8 and closes[-8] else 0.0
+        chg_14 = (px / closes[-15] - 1) * 100 if len(closes) >= 15 and closes[-15] else 0.0
+        chg_30 = (px / closes[-31] - 1) * 100 if len(closes) >= 31 and closes[-31] else 0.0
+        ath_distance = (hi_180 / px - 1) * 100 if px > 0 else 0.0
+        atl_distance = (px / lo_180 - 1) * 100 if lo_180 > 0 else 0.0
+
+        def _ema(values: list[float], period: int) -> float | None:
+            if len(values) < period:
+                return None
+            alpha = 2 / (period + 1)
+            cur = sum(values[:period]) / period
+            for value in values[period:]:
+                cur = value * alpha + cur * (1 - alpha)
+            return cur
+
+        ema20 = _ema(closes, 20)
+        ema50 = _ema(closes, 50)
+        regime = "neutral"
+        if ema20 and ema50:
+            if px > ema20 > ema50:
+                regime = "bull"
+            elif px < ema20 < ema50:
+                regime = "bear"
+            else:
+                regime = "mixed"
+
+        checks: list[dict[str, Any]] = []
+        reasons: list[str] = []
+        score = 50.0
+        critical_fails = 0
+
+        def add_check(name: str, status: str, value: Any, detail: str, score_delta: float = 0.0, critical: bool = False) -> None:
+            nonlocal score, critical_fails
+            checks.append({"name": name, "status": status, "value": value, "detail": detail})
+            score += score_delta
+            if status == "fail":
+                reasons.append(f"{name}: {detail}")
+                if critical:
+                    critical_fails += 1
+
+        residency_ok = 0.2 <= rp_30 <= 0.8 and 0.2 <= rp_90 <= 0.8
+        add_check(
+            "Range residency 30d/90d",
+            "pass" if residency_ok else ("warn" if 0.1 <= rp_30 <= 0.9 else "fail"),
+            {"30d": round(rp_30, 4), "90d": round(rp_90, 4)},
+            "Healthy mid-range positioning." if residency_ok else "Price is drifting too near range edge.",
+            12 if residency_ok else (-6 if 0.1 <= rp_30 <= 0.9 else -14),
+            critical=not residency_ok and not (0.1 <= rp_30 <= 0.9),
+        )
+
+        edge_ok = edge_distance >= 0.12
+        add_check(
+            "Range edge risk",
+            "pass" if edge_ok else ("warn" if edge_distance >= 0.08 else "fail"),
+            round(edge_distance, 4),
+            "Enough room to absorb noise." if edge_ok else "Entry is too close to range boundary.",
+            10 if edge_ok else (-4 if edge_distance >= 0.08 else -12),
+            critical=edge_distance < 0.08,
+        )
+
+        recoil_ok = abs(chg_14) <= 14
+        add_check(
+            "Recent move 14d",
+            "pass" if recoil_ok else "warn",
+            round(chg_14, 3),
+            "Recent move is not overheated." if recoil_ok else "Recent move is extended; timing risk is higher.",
+            8 if recoil_ok else -5,
+        )
+
+        midpoint = (hi_180 + lo_180) / 2 if hi_180 > lo_180 else px
+        midpoint_dist = ((px / midpoint) - 1) * 100 if midpoint else 0.0
+        midpoint_ok = abs(midpoint_dist) <= 20
+        add_check(
+            "Midpoint vs ATH/ATL 180d",
+            "pass" if midpoint_ok else "warn",
+            round(midpoint_dist, 3),
+            "Price is reasonably centered in long-term structure." if midpoint_ok else "Price is displaced from long-term midpoint.",
+            7 if midpoint_ok else -4,
+        )
+
+        close_1 = float(((candidate.get("metrics") or {}).get("expectedClosePnlAfter1PctAdverse")) or 0.0)
+        pnl_consistent = close_1 > 0
+        add_check(
+            "Closeable PnL after 1% adverse",
+            "pass" if pnl_consistent else "fail",
+            round(close_1, 6),
+            "Closeable stress remains positive." if pnl_consistent else "Stress closeable PnL is negative.",
+            14 if pnl_consistent else -16,
+            critical=not pnl_consistent,
+        )
+
+        regime_status = "pass" if regime == "bull" else ("warn" if regime == "mixed" else "fail")
+        add_check(
+            "EMA20/EMA50 regime",
+            regime_status,
+            regime,
+            "Trend regime supports continuation." if regime == "bull" else ("Regime is mixed; wait for confirmation." if regime == "mixed" else "Bear regime increases downside risk."),
+            9 if regime == "bull" else (-2 if regime == "mixed" else -10),
+            critical=regime == "bear" and str(candidate.get("workerType") or "") == "scalper",
+        )
+
+        score = max(0.0, min(100.0, score))
+        if critical_fails > 0 or score < 52:
+            recommendation = "REJECT"
+            summary = "Technical context is weak for now; avoid new miner creation."
+        elif score >= 74:
+            recommendation = "GO"
+            summary = "Setup is technically aligned; execution window is acceptable."
+        else:
+            recommendation = "WAIT"
+            summary = "Setup is promising but timing/context needs confirmation."
+
+        return {
+            "ok": True,
+            "symbol": symbol.upper(),
+            "configKey": config_key,
+            "workerType": candidate.get("workerType"),
+            "workerTypeLabel": candidate.get("workerTypeLabel"),
+            "recommendation": recommendation,
+            "score": round(score, 2),
+            "summary": summary,
+            "checks": checks,
+            "reasons": reasons,
+            "metrics": {
+                "residency30d": rp_30,
+                "residency90d": rp_90,
+                "edgeDistance": edge_distance,
+                "change3dPct": chg_3,
+                "change7dPct": chg_7,
+                "change14dPct": chg_14,
+                "change30dPct": chg_30,
+                "athDistancePct": ath_distance,
+                "atlDistancePct": atl_distance,
+                "midpointDistancePct": midpoint_dist,
+                "ema20": ema20,
+                "ema50": ema50,
+                "regime": regime,
+                "source": resolved_source,
+            },
+            "candidateSnapshot": candidate,
+            "advisoryOnly": True,
+            "generatedAt": int(time.time() * 1000),
+        }
+
 
 opportunities_service = OpportunitiesService()

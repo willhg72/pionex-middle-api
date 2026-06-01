@@ -8,6 +8,8 @@ from app.schemas.opportunities.responses import (
     OpportunityCreateOut,
     OpportunityCreatePreviewIn,
     OpportunityCreatePreviewOut,
+    OpportunityTechnicalGateIn,
+    OpportunityTechnicalGateOut,
 )
 from app.services.miners_service import miners_service
 from app.services.opportunities_service import opportunities_service
@@ -56,7 +58,7 @@ async def dashboard_opportunity_create_preview(payload: OpportunityCreatePreview
 
 
 @router.post("/create", response_model=OpportunityCreateOut)
-async def dashboard_opportunity_create(payload: OpportunityCreateIn) -> OpportunityCreateOut:
+async def dashboard_opportunity_create(payload: OpportunityCreateIn, x_api_key: str = Depends(require_api_key)) -> OpportunityCreateOut:
     settings = get_settings()
     rows = await opportunities_service.list_opportunities(
         universe=payload.symbol,
@@ -76,7 +78,10 @@ async def dashboard_opportunity_create(payload: OpportunityCreateIn) -> Opportun
         raise HTTPException(status_code=404, detail="Opportunity row not found")
 
     cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
-    api_key, api_secret, _ = miners_service.resolve_credentials(cred_payload, settings.pionex_api_key, settings.pionex_api_secret)
+    allow_owner_fallback = bool(settings.owner_api_key and x_api_key == settings.owner_api_key)
+    api_key, api_secret, _ = miners_service.require_credentials(
+        cred_payload, settings.pionex_api_key, settings.pionex_api_secret, allow_env_fallback=allow_owner_fallback
+    )
 
     result = await opportunities_service.execute_create(
         token=payload.confirmationToken,
@@ -86,4 +91,16 @@ async def dashboard_opportunity_create(payload: OpportunityCreateIn) -> Opportun
         secret=settings.miner_confirmation_secret,
     )
     return OpportunityCreateOut(**result)
+
+
+@router.post("/technical-gate", response_model=OpportunityTechnicalGateOut)
+async def dashboard_opportunity_technical_gate(payload: OpportunityTechnicalGateIn) -> OpportunityTechnicalGateOut:
+    result = await opportunities_service.build_technical_gate(
+        symbol=payload.symbol,
+        config_key=payload.configKey,
+        source=payload.source,
+        capital=payload.capital,
+        target_daily_usdt=payload.targetDailyUsdt,
+    )
+    return OpportunityTechnicalGateOut(**result)
 

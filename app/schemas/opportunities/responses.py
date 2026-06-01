@@ -111,3 +111,59 @@ class OpportunityCreateOut(BaseModel):
     error_code: str | None = None
     error_message: str | None = None
     request_body: dict
+
+
+class OpportunityTechnicalGateIn(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "symbol": "DOGEUSDT",
+                "configKey": "robust_5x",
+                "source": "pionex",
+                "capital": 175,
+                "targetDailyUsdt": 1,
+            }
+        }
+    )
+    symbol: str
+    configKey: str
+    source: str = "pionex"
+    capital: float = Field(gt=0)
+    targetDailyUsdt: float = Field(gt=0)
+
+
+class OpportunityTechnicalGateOut(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "ok": True,
+                "symbol": "DOGEUSDT",
+                "configKey": "robust_5x",
+                "workerType": "robust",
+                "workerTypeLabel": "Robust 5x",
+                "recommendation": "WAIT",
+                "score": 68.4,
+                "summary": "Setup is promising but timing/context needs confirmation.",
+                "checks": [{"name": "Range residency", "status": "warn", "value": 0.58, "detail": "30d/90d mixed."}],
+                "reasons": ["Recent rebound is hot; wait for calmer entry."],
+                "metrics": {"residency30d": 0.58},
+                "candidateSnapshot": {"symbol": "DOGEUSDT"},
+                "advisoryOnly": True,
+                "generatedAt": 1717280000000,
+            }
+        }
+    )
+    ok: bool
+    symbol: str
+    configKey: str
+    workerType: str
+    workerTypeLabel: str
+    recommendation: str
+    score: float
+    summary: str
+    checks: list[dict]
+    reasons: list[str]
+    metrics: dict
+    candidateSnapshot: dict
+    advisoryOnly: bool
+    generatedAt: int
