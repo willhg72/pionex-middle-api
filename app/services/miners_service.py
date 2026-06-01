@@ -14,18 +14,48 @@ from app.services.miners_utils import normalize_miner_symbol, validate_api_keys
 
 class MinersService:
     @staticmethod
-    def resolve_credentials(payload: dict[str, Any], env_key: str | None, env_secret: str | None) -> tuple[str, str, str]:
-        env_k = str(env_key or "").strip()
-        env_s = str(env_secret or "").strip()
-        if env_k and env_s:
-            return env_k, env_s, "env"
+    def _normalize_quote_investment(data: dict[str, Any]) -> tuple[float, bool]:
+        raw = float(data.get("quoteInvestment") or 0.0)
+        leverage = float(data.get("leverage") or 0.0)
+        usdt_investment = data.get("usdtInvestment")
+        try:
+            capital_ref = float(usdt_investment) if usdt_investment not in (None, "") else None
+        except (TypeError, ValueError):
+            capital_ref = None
 
+        if raw > 0 and leverage > 1 and capital_ref and capital_ref > 0:
+            implied = capital_ref * leverage
+            drift = abs(raw - implied) / max(implied, 1e-9)
+            # Strong match: quoteInvestment is actually notional (capital * leverage).
+            if drift <= 0.15:
+                return capital_ref, True
+        return raw, False
+
+    @staticmethod
+    def resolve_credentials(payload: dict[str, Any], env_key: str | None, env_secret: str | None, *, allow_env_fallback: bool = False) -> tuple[str, str, str]:
         req_k = str(payload.get("api_key") or "").strip()
         req_s = str(payload.get("api_secret") or "").strip()
         if req_k and req_s:
             return req_k, req_s, "request"
 
+        env_k = str(env_key or "").strip()
+        env_s = str(env_secret or "").strip()
+        if allow_env_fallback and env_k and env_s:
+            return env_k, env_s, "owner_env_fallback"
+
         return "", "", "none"
+
+    @staticmethod
+    def require_credentials(payload: dict[str, Any], env_key: str | None, env_secret: str | None, *, allow_env_fallback: bool = False) -> tuple[str, str, str]:
+        api_key, api_secret, source = MinersService.resolve_credentials(
+            payload, env_key, env_secret, allow_env_fallback=allow_env_fallback
+        )
+        if not api_key or not api_secret:
+            raise HTTPException(
+                status_code=400,
+                detail="Missing tenant exchange credentials. Send api_key/api_secret or configure tenant credentials.",
+            )
+        return api_key, api_secret, source
 
     async def list_miners(self, *, api_key: str, api_secret: str, target_daily_usdt: float = 1.0) -> list[dict[str, Any]]:
         keys_ok, key_error = validate_api_keys(api_key, api_secret)
@@ -48,6 +78,7 @@ class MinersService:
             total_profit = data.get("totalProfit")
             total_profit_f = float(total_profit) if total_profit not in (None, "") else None
             current_price = data.get("latestPrice") or data.get("initPrice") or data.get("positionOpenPrice")
+            quote_investment, was_normalized = self._normalize_quote_investment(data)
 
             miner = {
                 "buOrderId": str(row.get("buOrderId") or data.get("buOrderId") or ""),
@@ -57,7 +88,9 @@ class MinersService:
                 "gridProfit": float(data.get("gridProfit") or 0.0),
                 "totalProfit": total_profit_f,
                 "closeProfit": total_profit_f,
-                "quoteInvestment": float(data.get("quoteInvestment") or 0.0),
+                "quoteInvestment": quote_investment,
+                "quoteInvestmentRaw": float(data.get("quoteInvestment") or 0.0),
+                "quoteInvestmentNormalized": was_normalized,
                 "leverage": float(data.get("leverage") or 0.0),
                 "position": float(data.get("position") or 0.0),
                 "currentPrice": float(current_price) if current_price not in (None, "") else None,
