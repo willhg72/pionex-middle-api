@@ -121,3 +121,12 @@ class MinerEventsResponse(BaseModel):
     ok: bool
     count: int
     events: list[dict]
+
+
+class MinerBackfillClosedOut(BaseModel):
+    ok: bool
+    month: str
+    window: dict
+    summary: dict
+    rows: list[dict]
+    errors: list[dict]

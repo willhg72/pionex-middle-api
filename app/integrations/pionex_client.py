@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
+from app.integrations.pionex_rate_limiter import PionexRateLimiter
 
 
 @dataclass
@@ -47,10 +48,30 @@ class SpotCancelResult:
     raw_response: dict[str, Any] | None = None
 
 
+@dataclass
+class BotStatusResult:
+    success: bool
+    status: str | None = None
+    pnl: float | None = None
+    last_update: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    raw_response: dict[str, Any] | None = None
+
+
 class PionexClient:
+    _rate_limiter = PionexRateLimiter(rate_per_sec=10.0, burst=10.0)
+    _weights = {
+        "/api/v1/trade/order": 1,
+        "/uapi/v1/trade/order": 1,
+        "/api/v1/trade/openOrders": 5,
+        "/uapi/v1/trade/openOrders": 5,
+    }
+
     def __init__(self, api_key: str, api_secret: str) -> None:
         self.api_key = api_key.strip()
         self.api_secret = api_secret.strip()
+        self._account_id = hashlib.sha256(self.api_key.encode("utf-8")).hexdigest()[:24] if self.api_key else "unknown"
         self.client = httpx.AsyncClient(
             base_url="https://api.pionex.com",
             timeout=30.0,
@@ -70,8 +91,10 @@ class PionexClient:
         return query, signature
 
     async def _signed_post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        weight = int(self._weights.get(path, 1))
         attempts = 3
         for idx in range(attempts):
+            await self._rate_limiter.acquire(self._account_id, weight)
             query, signature = self._generate_signature("POST", path, body)
             headers = {"PIONEX-KEY": self.api_key, "PIONEX-SIGNATURE": signature}
             try:
@@ -83,6 +106,7 @@ class PionexClient:
                 continue
 
             if response.status_code == 429 and idx < attempts - 1:
+                await self._rate_limiter.mark_429(self._account_id, cooldown_s=60.0)
                 await asyncio.sleep(0.8 * (idx + 1))
                 continue
             if response.status_code >= 500 and idx < attempts - 1:
@@ -92,8 +116,10 @@ class PionexClient:
         return {"result": False, "code": "429", "message": "Upstream rate limit (429)"}
 
     async def _signed_get(self, path: str, query_params: dict[str, Any] | None = None) -> dict[str, Any]:
+        weight = int(self._weights.get(path, 1))
         attempts = 3
         for idx in range(attempts):
+            await self._rate_limiter.acquire(self._account_id, weight)
             query, signature = self._generate_signature("GET", path, {}, extra_query=query_params)
             headers = {"PIONEX-KEY": self.api_key, "PIONEX-SIGNATURE": signature}
             try:
@@ -105,6 +131,7 @@ class PionexClient:
                 continue
 
             if response.status_code == 429 and idx < attempts - 1:
+                await self._rate_limiter.mark_429(self._account_id, cooldown_s=60.0)
                 await asyncio.sleep(0.8 * (idx + 1))
                 continue
             if response.status_code >= 500 and idx < attempts - 1:
@@ -121,6 +148,76 @@ class PionexClient:
 
     async def cancel_bot_order(self, *, bu_order_id: str) -> dict[str, Any]:
         return await self._signed_post("/api/v1/bot/order/cancel", {"buOrderId": bu_order_id})
+
+    async def get_bot_status(self, bu_order_id: str) -> BotStatusResult:
+        oid = str(bu_order_id or "").strip()
+        if not oid:
+            return BotStatusResult(success=False, error_message="bu_order_id is required")
+
+        endpoints = [
+            "/api/v1/bot/orders/futuresGrid/order",
+            "/api/v1/bot/orders/spotGrid/order",
+            "/api/v1/bot/orders/smartCopy/order",
+        ]
+        last_data: dict[str, Any] | None = None
+        for path in endpoints:
+            data = await self._signed_get(path, {"buOrderId": oid})
+            last_data = data
+            if data.get("result"):
+                payload = data.get("data") if isinstance(data.get("data"), dict) else {}
+                bu_data = payload.get("buOrderData") if isinstance(payload.get("buOrderData"), dict) else {}
+                status = str(
+                    bu_data.get("status")
+                    or payload.get("status")
+                    or payload.get("state")
+                    or payload.get("botStatus")
+                    or ""
+                ).lower() or None
+
+                def _num(v: Any) -> float | None:
+                    try:
+                        return float(v)
+                    except (TypeError, ValueError):
+                        return None
+
+                pnl = next(
+                    (
+                        x
+                        for x in (
+                            _num(bu_data.get("totalProfit")),
+                            _num(bu_data.get("realizedProfit")),
+                            _num(bu_data.get("gridProfit")),
+                            _num(payload.get("totalProfit")),
+                            _num(payload.get("profit")),
+                        )
+                        if x is not None
+                    ),
+                    None,
+                )
+                updated = (
+                    bu_data.get("updateTime")
+                    or payload.get("updateTime")
+                    or payload.get("closeTime")
+                    or bu_data.get("createTime")
+                    or payload.get("createTime")
+                )
+                return BotStatusResult(
+                    success=True,
+                    status=status,
+                    pnl=pnl,
+                    last_update=str(updated) if updated is not None else None,
+                    raw_response=data,
+                )
+            msg = str(data.get("message") or "").lower()
+            if "not found" in msg or "invalid" in msg:
+                continue
+
+        return BotStatusResult(
+            success=False,
+            error_code=str((last_data or {}).get("code") or ""),
+            error_message=str((last_data or {}).get("message") or "Unable to query bot status"),
+            raw_response=last_data,
+        )
 
     async def get_futures_position_mode(self) -> dict[str, Any]:
         return await self._signed_get("/uapi/v1/account/positionMode")

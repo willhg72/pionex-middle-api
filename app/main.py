@@ -9,6 +9,7 @@ from app.api.v1.endpoints.discovery import router as discovery_router
 from app.api.v1.endpoints.btc_core import router as btc_core_router
 from app.api.v1.endpoints.btc_ladder import router as btc_ladder_router
 from app.api.v1.endpoints.opportunities import router as opportunities_router
+from app.api.v1.endpoints.miners import router as miners_router
 from app.core.exceptions import register_exception_handlers
 from app.core.middleware import register_middlewares
 from app.core.settings import configure_logging, get_settings
@@ -68,6 +69,7 @@ def create_app() -> FastAPI:
     app.include_router(btc_core_router, prefix="/api")
     app.include_router(btc_ladder_router, prefix="/api")
     app.include_router(opportunities_router, prefix="/api")
+    app.include_router(miners_router, prefix="/api")
     return app
 
 

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import require_api_key, tenant_id_from_api_key
@@ -13,9 +14,11 @@ from app.schemas.miners.responses import (
     MinerClosePreviewOut,
     MinerEventsResponse,
     MinerHistoryResponse,
+    MinerBackfillClosedOut,
     MinersResponse,
 )
 from app.services.miners_service import miners_service
+from app.integrations.pionex_client import PionexClient
 
 router = APIRouter(prefix="/dashboard/miners", dependencies=[Depends(require_api_key)])
 
@@ -25,6 +28,40 @@ def _is_upstream_429(exc: HTTPException) -> bool:
     return exc.status_code == 502 and "429" in detail
 
 
+def _parse_month_window(month: str) -> tuple[datetime, datetime]:
+    try:
+        start = datetime.strptime(month, "%Y-%m").replace(tzinfo=timezone.utc)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="month must be YYYY-MM") from exc
+    if start.month == 12:
+        end = start.replace(year=start.year + 1, month=1)
+    else:
+        end = start.replace(month=start.month + 1)
+    return start, end
+
+
+def _to_dt_utc(value: object) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc)
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        raw = float(text)
+        if raw > 1_000_000_000_000:
+            return datetime.fromtimestamp(raw / 1000.0, tz=timezone.utc)
+        if raw > 1_000_000_000:
+            return datetime.fromtimestamp(raw, tz=timezone.utc)
+    except ValueError:
+        pass
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
 @router.get("", response_model=MinersResponse)
 async def dashboard_miners(
     targetDailyUsdt: float = Query(1.0, gt=0),
@@ -32,7 +69,10 @@ async def dashboard_miners(
     db: AsyncSession = Depends(get_db_session),
 ) -> MinersResponse:
     settings = get_settings()
-    api_key, api_secret, source = miners_service.resolve_credentials({}, settings.pionex_api_key, settings.pionex_api_secret)
+    allow_owner_fallback = bool(settings.owner_api_key and x_api_key == settings.owner_api_key)
+    api_key, api_secret, source = miners_service.require_credentials(
+        {}, settings.pionex_api_key, settings.pionex_api_secret, allow_env_fallback=allow_owner_fallback
+    )
     repo = MinerOpsRepository(db)
     tenant_id = tenant_id_from_api_key(x_api_key)
     try:
@@ -59,7 +99,10 @@ async def dashboard_miners_with_credentials(
     db: AsyncSession = Depends(get_db_session),
 ) -> MinersResponse:
     settings = get_settings()
-    api_key, api_secret, source = miners_service.resolve_credentials(payload, settings.pionex_api_key, settings.pionex_api_secret)
+    allow_owner_fallback = bool(settings.owner_api_key and x_api_key == settings.owner_api_key)
+    api_key, api_secret, source = miners_service.require_credentials(
+        payload, settings.pionex_api_key, settings.pionex_api_secret, allow_env_fallback=allow_owner_fallback
+    )
     repo = MinerOpsRepository(db)
     tenant_id = tenant_id_from_api_key(x_api_key)
     try:
@@ -126,7 +169,10 @@ async def dashboard_miner_close_execute(payload: MinerCloseExecuteIn, x_api_key:
     token_payload = miners_service.verify_close_token(payload.confirmationToken, settings.miner_confirmation_secret)
 
     cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
-    api_key, api_secret, _ = miners_service.resolve_credentials(cred_payload, settings.pionex_api_key, settings.pionex_api_secret)
+    allow_owner_fallback = bool(settings.owner_api_key and x_api_key == settings.owner_api_key)
+    api_key, api_secret, _ = miners_service.require_credentials(
+        cred_payload, settings.pionex_api_key, settings.pionex_api_secret, allow_env_fallback=allow_owner_fallback
+    )
 
     bu_order_id = str(token_payload.get("buOrderId") or "")
     symbol = token_payload.get("symbol")
@@ -156,18 +202,137 @@ async def dashboard_miner_close_execute(payload: MinerCloseExecuteIn, x_api_key:
 
 
 @router.get("/account-balance", response_model=AccountBalanceResponse)
-async def dashboard_account_balance() -> AccountBalanceResponse:
+async def dashboard_account_balance(x_api_key: str = Depends(require_api_key)) -> AccountBalanceResponse:
     settings = get_settings()
-    api_key, api_secret, source = miners_service.resolve_credentials({}, settings.pionex_api_key, settings.pionex_api_secret)
+    allow_owner_fallback = bool(settings.owner_api_key and x_api_key == settings.owner_api_key)
+    api_key, api_secret, source = miners_service.require_credentials(
+        {}, settings.pionex_api_key, settings.pionex_api_secret, allow_env_fallback=allow_owner_fallback
+    )
     payload = await miners_service.get_account_balance(api_key=api_key, api_secret=api_secret)
     payload["credentialsSource"] = source
     return AccountBalanceResponse(**payload)
 
 
 @router.post("/account-balance", response_model=AccountBalanceResponse)
-async def dashboard_account_balance_with_credentials(payload: dict = Body(default_factory=dict)) -> AccountBalanceResponse:
+async def dashboard_account_balance_with_credentials(payload: dict = Body(default_factory=dict), x_api_key: str = Depends(require_api_key)) -> AccountBalanceResponse:
     settings = get_settings()
-    api_key, api_secret, source = miners_service.resolve_credentials(payload, settings.pionex_api_key, settings.pionex_api_secret)
+    allow_owner_fallback = bool(settings.owner_api_key and x_api_key == settings.owner_api_key)
+    api_key, api_secret, source = miners_service.require_credentials(
+        payload, settings.pionex_api_key, settings.pionex_api_secret, allow_env_fallback=allow_owner_fallback
+    )
     response = await miners_service.get_account_balance(api_key=api_key, api_secret=api_secret)
     response["credentialsSource"] = source
     return AccountBalanceResponse(**response)
+
+
+@router.post("/backfill-closed", response_model=MinerBackfillClosedOut)
+async def dashboard_miners_backfill_closed(
+    month: str = Query(..., description="Month window in YYYY-MM format"),
+    maxRecords: int = Query(500, ge=1, le=2000),
+    persist: bool = Query(False),
+    apiKey: str | None = Query(None),
+    apiSecret: str | None = Query(None),
+    x_api_key: str = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+) -> MinerBackfillClosedOut:
+    start_utc, end_utc = _parse_month_window(month)
+    start_ms = int(start_utc.timestamp() * 1000)
+    end_ms = int(end_utc.timestamp() * 1000)
+    tenant_id = tenant_id_from_api_key(x_api_key)
+
+    repo = MinerOpsRepository(db)
+    bu_order_ids = await repo.list_distinct_bu_order_ids(tenant_id=tenant_id, limit=maxRecords)
+    if not bu_order_ids:
+        return MinerBackfillClosedOut(
+            ok=True,
+            month=month,
+            window={"start": start_utc.isoformat(), "end": end_utc.isoformat()},
+            summary={"tenantBuOrderIds": 0, "checked": 0, "closedInMonth": 0, "withPnl": 0, "persisted": 0, "coveragePct": 0.0},
+            rows=[],
+            errors=[],
+        )
+
+    settings = get_settings()
+    allow_owner_fallback = bool(settings.owner_api_key and x_api_key == settings.owner_api_key)
+    cred_payload = {"api_key": apiKey or "", "api_secret": apiSecret or ""}
+    api_key, api_secret, _ = miners_service.require_credentials(
+        cred_payload, settings.pionex_api_key, settings.pionex_api_secret, allow_env_fallback=allow_owner_fallback
+    )
+
+    pionex = PionexClient(api_key, api_secret)
+    rows: list[dict] = []
+    errors: list[dict] = []
+    persisted = 0
+    try:
+        for bu_order_id in bu_order_ids:
+            try:
+                status_result = await pionex.get_bot_status(bu_order_id)
+                payload = status_result.raw_response.get("data") if isinstance(status_result.raw_response, dict) else {}
+                payload = payload if isinstance(payload, dict) else {}
+                close_dt = _to_dt_utc(
+                    payload.get("closeTime")
+                    or payload.get("closedAt")
+                    or payload.get("finishTime")
+                    or payload.get("updateTime")
+                    or status_result.last_update
+                )
+                close_ms = int(close_dt.timestamp() * 1000) if close_dt else None
+                in_month = bool(close_ms and start_ms <= close_ms < end_ms)
+                pnl_value = status_result.pnl
+                if pnl_value is None:
+                    for key in ("totalProfit", "profit", "totalRealizedProfit", "marginCloseProfit"):
+                        try:
+                            v = payload.get(key)
+                            if v is None or v == "":
+                                continue
+                            pnl_value = float(v)
+                            break
+                        except (TypeError, ValueError):
+                            continue
+                row = {
+                    "buOrderId": bu_order_id,
+                    "status": str(status_result.status or payload.get("status") or "unknown"),
+                    "closedAt": close_dt.isoformat() if close_dt else None,
+                    "closedAtMs": close_ms,
+                    "inMonth": in_month,
+                    "realizedPnlUsdt": pnl_value,
+                    "hasPnl": pnl_value is not None,
+                    "apiSuccess": bool(status_result.success),
+                }
+                rows.append(row)
+                if persist and in_month:
+                    await repo.save_event(
+                        tenant_id=tenant_id,
+                        bu_order_id=bu_order_id,
+                        symbol=None,
+                        event_type="miner_backfill_closed",
+                        reason=f"month={month}",
+                        payload=row,
+                    )
+                    persisted += 1
+            except Exception as exc:  # noqa: BLE001
+                errors.append({"buOrderId": bu_order_id, "message": str(exc)})
+    finally:
+        await pionex.close()
+
+    if persist and persisted:
+        await repo.commit()
+
+    in_month_rows = [r for r in rows if r.get("inMonth")]
+    with_pnl_rows = [r for r in in_month_rows if r.get("hasPnl")]
+    coverage = round((len(with_pnl_rows) / max(1, len(in_month_rows))) * 100, 2) if in_month_rows else 0.0
+    return MinerBackfillClosedOut(
+        ok=True,
+        month=month,
+        window={"start": start_utc.isoformat(), "end": end_utc.isoformat()},
+        summary={
+            "tenantBuOrderIds": len(bu_order_ids),
+            "checked": len(rows),
+            "closedInMonth": len(in_month_rows),
+            "withPnl": len(with_pnl_rows),
+            "persisted": persisted,
+            "coveragePct": coverage,
+        },
+        rows=in_month_rows,
+        errors=errors[:50],
+    )

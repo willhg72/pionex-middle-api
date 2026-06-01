@@ -91,5 +91,33 @@ class MinerOpsRepository:
                 latest_by_order[key] = payload
         return list(latest_by_order.values())
 
+    async def list_distinct_bu_order_ids(self, *, tenant_id: str, limit: int) -> list[str]:
+        snap_rows = (
+            await self.session.execute(
+                select(MinerSnapshot.bu_order_id)
+                .where(MinerSnapshot.tenant_id == tenant_id)
+                .order_by(desc(MinerSnapshot.created_at))
+                .limit(limit)
+            )
+        ).all()
+        evt_rows = (
+            await self.session.execute(
+                select(MinerEvent.bu_order_id)
+                .where(MinerEvent.tenant_id == tenant_id)
+                .order_by(desc(MinerEvent.created_at))
+                .limit(limit)
+            )
+        ).all()
+        ordered = [str(r[0] or "").strip() for r in (snap_rows + evt_rows)]
+        seen: set[str] = set()
+        out: list[str] = []
+        for oid in ordered:
+            if oid and oid not in seen:
+                seen.add(oid)
+                out.append(oid)
+            if len(out) >= limit:
+                break
+        return out
+
     async def commit(self) -> None:
         await self.session.commit()
