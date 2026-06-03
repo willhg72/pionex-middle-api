@@ -13,6 +13,7 @@ from app.db.session import SessionLocal
 from app.integrations.pionex_client import PionexClient
 from app.repositories.scalping_monitor_repository import ScalpingMonitorRepository
 from app.services.analyzer_service import analyzer_service
+from app.services.miners_metrics import compute_range_health
 from app.services.miners_utils import validate_api_keys
 
 DEFAULT_SCALPING_UNIVERSE = ["BTCUSDT", "ETHUSDT", "DOGEUSDT", "LINKUSDT", "SOLUSDT"]
@@ -158,6 +159,53 @@ class ScalpingService:
             "market": {"volumeRatio": volume_ratio, "emaFilter": ema_filter},
         }
 
+    def _active_miner_context(self, symbol: str, active_miners: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+        if not active_miners:
+            return None
+        normalized = self.normalize_symbol(symbol)
+        for miner in active_miners:
+            miner_symbol = self.normalize_symbol(str(miner.get("symbol") or ""))
+            if miner_symbol != normalized:
+                continue
+            range_health = str(miner.get("rangeHealth") or compute_range_health(miner.get("rangePosition")) or "unknown")
+            status = "edge" if range_health in {"near_low_edge", "near_high_edge"} else "active"
+            return {
+                "status": status,
+                "rangeHealth": range_health,
+                "rangePosition": miner.get("rangePosition"),
+                "inventoryRatio": miner.get("inventoryRatio"),
+                "buOrderId": miner.get("buOrderId"),
+            }
+        return None
+
+    def _apply_active_miner_context(self, signal: dict[str, Any], miner_context: dict[str, Any] | None) -> dict[str, Any]:
+        if not miner_context:
+            return signal
+        out = dict(signal)
+        out["activeMiner"] = miner_context
+        if str(miner_context.get("status") or "") != "edge":
+            return out
+
+        setup = str(out.get("setup") or "")
+        direction = str(out.get("direction") or "")
+        continuation_ok = setup in {"breakout_retest", "ema_trend_pullback_abc"} and direction == "long"
+
+        if continuation_ok:
+            risk_mult = 0.65
+            out["riskMultiplier"] = risk_mult
+            out["riskUsdt"] = round(float(out.get("riskUsdt") or 0.0) * risk_mult, 4)
+            out["notional"] = round(float(out.get("notional") or 0.0) * risk_mult, 8)
+            out["margin"] = round(float(out.get("margin") or 0.0) * risk_mult, 8)
+            out["reason"] = f"{out.get('reason')}. Active miner is near range edge; risk reduced."
+            out["activeMiner"]["status"] = "edge"
+            out["activeMiner"]["continuationAllowed"] = True
+            return out
+
+        out["reason"] = f"{out.get('reason')}. Active miner is near range edge."
+        out["activeMiner"]["status"] = "edge"
+        out["activeMiner"]["continuationAllowed"] = False
+        return out
+
     def _adaptive_volume_threshold(self, signal: dict[str, Any]) -> dict[str, Any]:
         setup = str(signal.get("setup") or "")
         market = signal.get("market") if isinstance(signal.get("market"), dict) else {}
@@ -238,11 +286,30 @@ class ScalpingService:
         }
         return checks
 
-    async def signals(self, *, universe: str | None, source: str, risk_usdt: float, leverage: float) -> dict[str, Any]:
-        symbols = [self.normalize_symbol(x.strip()) for x in (universe or ",".join(DEFAULT_SCALPING_UNIVERSE)).split(",") if x.strip()]
-        if not symbols:
-            symbols = list(DEFAULT_SCALPING_UNIVERSE)
-        symbols = symbols[:12]
+    async def signals(
+        self,
+        *,
+        universe: str | None,
+        source: str,
+        risk_usdt: float,
+        leverage: float,
+        active_miners: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        requested = [self.normalize_symbol(x.strip()) for x in (universe or ",".join(DEFAULT_SCALPING_UNIVERSE)).split(",") if x.strip()]
+        if not requested:
+            requested = list(DEFAULT_SCALPING_UNIVERSE)
+        merged: list[str] = []
+        seen: set[str] = set()
+        for symbol in requested:
+            if symbol not in seen:
+                seen.add(symbol)
+                merged.append(symbol)
+        for miner in active_miners or []:
+            miner_symbol = self.normalize_symbol(str(miner.get("symbol") or ""))
+            if miner_symbol and miner_symbol not in seen:
+                seen.add(miner_symbol)
+                merged.append(miner_symbol)
+        symbols = merged[:20]
 
         rows: list[dict[str, Any]] = []
         errors: list[dict[str, str]] = []
@@ -250,7 +317,9 @@ class ScalpingService:
             try:
                 _, k5 = await analyzer_service.fetch_klines(symbol=symbol, interval="5m", limit=140, source=source, start_time=None, end_time=None)
                 _, k15 = await analyzer_service.fetch_klines(symbol=symbol, interval="15m", limit=140, source=source, start_time=None, end_time=None)
-                rows.append(self._signal_from_klines(symbol, k5, k15, risk_usdt, leverage))
+                signal = self._signal_from_klines(symbol, k5, k15, risk_usdt, leverage)
+                signal = self._apply_active_miner_context(signal, self._active_miner_context(symbol, active_miners))
+                rows.append(signal)
             except Exception as exc:  # noqa: BLE001
                 errors.append({"symbol": symbol, "message": str(exc)})
                 rows.append({"symbol": symbol, "setup": "no_data", "direction": "none", "score": 0, "status": "no_data", "reason": str(exc)})

@@ -139,14 +139,20 @@ class MinersService:
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=400, detail=f"Invalid confirmation token: {exc}") from exc
 
-    async def close_miner(self, *, api_key: str, api_secret: str, bu_order_id: str) -> dict[str, Any]:
+    async def close_miner(self, *, api_key: str, api_secret: str, bu_order_id: str, close_reason: str | None = None) -> dict[str, Any]:
         keys_ok, key_error = validate_api_keys(api_key, api_secret)
         if not keys_ok:
             raise HTTPException(status_code=400, detail=key_error)
 
         client = PionexClient(api_key, api_secret)
         try:
-            payload = await client.cancel_bot_order(bu_order_id=bu_order_id)
+            payload = await client.cancel_bot_order(
+                bu_order_id=bu_order_id,
+                close_note=close_reason,
+                close_sell_model="TO_USDT",
+                immediate=True,
+                close_slippage="0.01",
+            )
         finally:
             await client.close()
 

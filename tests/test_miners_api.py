@@ -40,3 +40,26 @@ def test_miners_429_fallback_uses_cached_snapshot(monkeypatch):
         assert body["ok"] is True
         assert body["count"] >= 1
         assert "cache_fallback" in body["source"]
+
+
+def test_miner_close_passes_close_reason_to_exchange(monkeypatch):
+    def fake_verify(token, secret):
+        return {"buOrderId": "BU123456", "symbol": "BTCUSDT", "exp": 1999999999}
+
+    observed: dict = {}
+
+    async def fake_close_miner(**kwargs):
+        observed.update(kwargs)
+        return {"result": True}
+
+    monkeypatch.setattr(miners_service, "verify_close_token", fake_verify)
+    monkeypatch.setattr(miners_service, "close_miner", fake_close_miner)
+
+    with TestClient(app) as client:
+        res = client.post(
+            "/api/v1/dashboard/miners/close",
+            headers={"X-API-Key": "test-key"},
+            json={"confirmationToken": "tok", "closeReason": "Close reason propagated to exchange"},
+        )
+    assert res.status_code == 200
+    assert observed["close_reason"] == "Close reason propagated to exchange"

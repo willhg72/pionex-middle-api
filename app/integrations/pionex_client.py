@@ -146,8 +146,24 @@ class PionexClient:
     async def get_account_balances(self) -> dict[str, Any]:
         return await self._signed_get("/api/v1/account/balances")
 
-    async def cancel_bot_order(self, *, bu_order_id: str) -> dict[str, Any]:
-        return await self._signed_post("/api/v1/bot/order/cancel", {"buOrderId": bu_order_id})
+    async def cancel_bot_order(
+        self,
+        *,
+        bu_order_id: str,
+        close_note: str | None = None,
+        close_sell_model: str = "TO_USDT",
+        immediate: bool = True,
+        close_slippage: str = "0.01",
+    ) -> dict[str, Any]:
+        canonical_body = {
+            "buOrderId": str(bu_order_id),
+            "closeNote": close_note,
+            "closeSellModel": close_sell_model,
+            "immediate": immediate,
+            "closeSlippage": close_slippage,
+        }
+        body = {k: v for k, v in canonical_body.items() if v is not None}
+        return await self._signed_post("/api/v1/bot/order/cancel", body)
 
     async def get_bot_status(self, bu_order_id: str) -> BotStatusResult:
         oid = str(bu_order_id or "").strip()

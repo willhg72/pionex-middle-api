@@ -180,6 +180,7 @@ async def dashboard_miner_close_execute(payload: MinerCloseExecuteIn, x_api_key:
         api_key=api_key,
         api_secret=api_secret,
         bu_order_id=bu_order_id,
+        close_reason=payload.closeReason,
     )
 
     repo = MinerOpsRepository(db)

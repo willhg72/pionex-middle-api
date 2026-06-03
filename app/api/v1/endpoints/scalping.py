@@ -37,8 +37,26 @@ async def scalping_signals(
     source: str = Query("pionex"),
     riskUsdt: float = Query(2.0, gt=0, le=20),
     leverage: float = Query(5.0, gt=0, le=20),
+    x_api_key: str = Depends(require_api_key),
 ) -> ScalpingSignalsResponse:
-    payload = await scalping_service.signals(universe=universe, source=source, risk_usdt=riskUsdt, leverage=leverage)
+    settings = get_settings()
+    active_miners: list[dict] = []
+    allow_owner_fallback = bool(settings.owner_api_key and x_api_key == settings.owner_api_key)
+    try:
+        api_key, api_secret, _ = miners_service.require_credentials(
+            {}, settings.pionex_api_key, settings.pionex_api_secret, allow_env_fallback=allow_owner_fallback
+        )
+        active_miners = await miners_service.list_miners(api_key=api_key, api_secret=api_secret, target_daily_usdt=1.0)
+    except Exception:
+        active_miners = []
+
+    payload = await scalping_service.signals(
+        universe=universe,
+        source=source,
+        risk_usdt=riskUsdt,
+        leverage=leverage,
+        active_miners=active_miners,
+    )
     return ScalpingSignalsResponse(**payload)
 
 
@@ -47,10 +65,14 @@ async def scalping_futures_capabilities(
     symbol: str = Query("BTCUSDT"),
     api_key: str | None = Query(None),
     api_secret: str | None = Query(None),
+    x_api_key: str = Depends(require_api_key),
 ) -> ScalpingCapabilitiesResponse:
     settings = get_settings()
     cred_payload = {"api_key": api_key or "", "api_secret": api_secret or ""}
-    resolved_key, resolved_secret, source = miners_service.resolve_credentials(cred_payload, settings.pionex_api_key, settings.pionex_api_secret)
+    allow_owner_fallback = bool(settings.owner_api_key and x_api_key == settings.owner_api_key)
+    resolved_key, resolved_secret, source = miners_service.resolve_credentials(
+        cred_payload, settings.pionex_api_key, settings.pionex_api_secret, allow_env_fallback=allow_owner_fallback
+    )
     keys_ok = bool(str(resolved_key).strip() and str(resolved_secret).strip())
     if not keys_ok:
         return ScalpingCapabilitiesResponse(
@@ -70,10 +92,13 @@ async def scalping_futures_capabilities(
 
 
 @router.post("/real-preview", response_model=ScalpingRealPreviewOut)
-async def scalping_real_preview(payload: ScalpingRealPreviewIn) -> ScalpingRealPreviewOut:
+async def scalping_real_preview(payload: ScalpingRealPreviewIn, x_api_key: str = Depends(require_api_key)) -> ScalpingRealPreviewOut:
     settings = get_settings()
     cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
-    api_key, api_secret, _ = miners_service.resolve_credentials(cred_payload, settings.pionex_api_key, settings.pionex_api_secret)
+    allow_owner_fallback = bool(settings.owner_api_key and x_api_key == settings.owner_api_key)
+    api_key, api_secret, _ = miners_service.require_credentials(
+        cred_payload, settings.pionex_api_key, settings.pionex_api_secret, allow_env_fallback=allow_owner_fallback
+    )
     result = await scalping_service.real_preview(
         symbol=scalping_service.normalize_symbol(payload.symbol),
         source=payload.source,
@@ -94,7 +119,10 @@ async def scalping_real_execute(
 ) -> ScalpingRealExecuteOut:
     settings = get_settings()
     cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
-    api_key, api_secret, _ = miners_service.resolve_credentials(cred_payload, settings.pionex_api_key, settings.pionex_api_secret)
+    allow_owner_fallback = bool(settings.owner_api_key and x_api_key == settings.owner_api_key)
+    api_key, api_secret, _ = miners_service.require_credentials(
+        cred_payload, settings.pionex_api_key, settings.pionex_api_secret, allow_env_fallback=allow_owner_fallback
+    )
     tenant_id = _tenant_id_from_key(x_api_key)
     if idempotency_key:
         async with SessionLocal() as session:
@@ -129,10 +157,13 @@ async def scalping_real_monitors(limit: int = Query(20, ge=1, le=200), x_api_key
 
 
 @router.post("/spot-preview", response_model=ScalpingSpotPreviewOut)
-async def scalping_spot_preview(payload: ScalpingSpotPreviewIn) -> ScalpingSpotPreviewOut:
+async def scalping_spot_preview(payload: ScalpingSpotPreviewIn, x_api_key: str = Depends(require_api_key)) -> ScalpingSpotPreviewOut:
     settings = get_settings()
     cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
-    api_key, api_secret, source = miners_service.resolve_credentials(cred_payload, settings.pionex_api_key, settings.pionex_api_secret)
+    allow_owner_fallback = bool(settings.owner_api_key and x_api_key == settings.owner_api_key)
+    api_key, api_secret, source = miners_service.require_credentials(
+        cred_payload, settings.pionex_api_key, settings.pionex_api_secret, allow_env_fallback=allow_owner_fallback
+    )
     result = await scalping_service.spot_preview(
         symbol=scalping_service.normalize_symbol(payload.symbol),
         source=payload.source,
@@ -153,7 +184,10 @@ async def scalping_spot_execute(
 ) -> ScalpingSpotExecuteOut:
     settings = get_settings()
     cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
-    api_key, api_secret, source = miners_service.resolve_credentials(cred_payload, settings.pionex_api_key, settings.pionex_api_secret)
+    allow_owner_fallback = bool(settings.owner_api_key and x_api_key == settings.owner_api_key)
+    api_key, api_secret, source = miners_service.require_credentials(
+        cred_payload, settings.pionex_api_key, settings.pionex_api_secret, allow_env_fallback=allow_owner_fallback
+    )
     tenant_id = _tenant_id_from_key(x_api_key)
     if idempotency_key:
         async with SessionLocal() as session:
