@@ -130,3 +130,124 @@ class MinerBackfillClosedOut(BaseModel):
     summary: dict
     rows: list[dict]
     errors: list[dict]
+
+
+class MinerStabilizationCheckIn(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {"buOrderId": "BU123456", "mode": "auto", "targetDailyUsdt": 1.0}
+        }
+    )
+    buOrderId: str = Field(min_length=6)
+    mode: str = Field(default="auto", pattern="^(auto|up|down)$")
+    targetDailyUsdt: float = Field(default=1.0, gt=0)
+    api_key: str | None = None
+    api_secret: str | None = None
+
+
+class MinerStabilizationCheckOut(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "ok": True,
+                "buOrderId": "BU123456",
+                "symbol": "BTC_USDT_PERP",
+                "rangeBreakState": "BREAK_UP",
+                "stabilizationState": "CONFIRMED",
+                "regridSuggestion": "MIGRATE_UP",
+                "stabilizationEvidence": {"hoursObserved": 6.0, "passed": True},
+                "regridCandidate": {"bottom": 65000.0, "top": 72000.0, "row": 80},
+            }
+        }
+    )
+    ok: bool
+    buOrderId: str
+    symbol: str | None = None
+    mode: str
+    rangeBreakState: str
+    stabilizationState: str
+    regridSuggestion: str
+    decisionReason: str
+    stabilizationEvidence: dict
+    regridCandidate: dict | None = None
+    blockers: list[str] = Field(default_factory=list)
+    liveMiner: dict | None = None
+
+
+class MinerRegridPreviewIn(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {"buOrderId": "BU123456", "mode": "auto", "targetDailyUsdt": 1.0}
+        }
+    )
+    buOrderId: str = Field(min_length=6)
+    mode: str = Field(default="auto", pattern="^(auto|up|down)$")
+    targetDailyUsdt: float = Field(default=1.0, gt=0)
+    api_key: str | None = None
+    api_secret: str | None = None
+
+
+class MinerRegridPreviewOut(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "ok": True,
+                "buOrderId": "BU123456",
+                "symbol": "BTC_USDT_PERP",
+                "mode": "auto",
+                "rangeBreakState": "BREAK_UP",
+                "stabilizationState": "CONFIRMED",
+                "regridSuggestion": "MIGRATE_UP",
+                "regridPayload": {"buOrderId": "BU123456", "bottom": 65000.0, "top": 72000.0, "row": 80},
+                "confirmationToken": "regrid_tok_xxx",
+                "confirmationRequired": True,
+            }
+        }
+    )
+    ok: bool
+    buOrderId: str
+    symbol: str | None = None
+    mode: str
+    rangeBreakState: str
+    stabilizationState: str
+    regridSuggestion: str
+    decisionReason: str
+    stabilizationEvidence: dict
+    regridCandidate: dict | None = None
+    regridPayload: dict | None = None
+    blockers: list[str] = Field(default_factory=list)
+    confirmationRequired: bool
+    expiresAt: int | None = None
+    confirmationToken: str | None = None
+
+
+class MinerRegridExecuteIn(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {"confirmationToken": "regrid_tok_xxx", "reason": "Breakout confirmed and range migrated upward"}
+        }
+    )
+    confirmationToken: str
+    reason: str = Field(min_length=8, max_length=400)
+    api_key: str | None = None
+    api_secret: str | None = None
+
+
+class MinerRegridExecuteOut(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "ok": True,
+                "buOrderId": "BU123456",
+                "symbol": "BTC_USDT_PERP",
+                "regridSuggestion": "MIGRATE_UP",
+                "pionexResult": {"result": True, "actionId": "ACT123"},
+            }
+        }
+    )
+    ok: bool
+    buOrderId: str
+    symbol: str | None = None
+    regridSuggestion: str
+    appliedRange: dict
+    pionexResult: dict

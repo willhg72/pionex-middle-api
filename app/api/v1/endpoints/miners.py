@@ -15,12 +15,19 @@ from app.schemas.miners.responses import (
     MinerEventsResponse,
     MinerHistoryResponse,
     MinerBackfillClosedOut,
+    MinerRegridExecuteIn,
+    MinerRegridExecuteOut,
+    MinerRegridPreviewIn,
+    MinerRegridPreviewOut,
+    MinerStabilizationCheckIn,
+    MinerStabilizationCheckOut,
     MinersResponse,
 )
 from app.services.miners_service import miners_service
 from app.integrations.pionex_client import PionexClient
 
 router = APIRouter(prefix="/dashboard/miners", dependencies=[Depends(require_api_key)])
+workers_router = APIRouter(prefix="/dashboard/workers", dependencies=[Depends(require_api_key)])
 
 
 def _is_upstream_429(exc: HTTPException) -> bool:
@@ -60,6 +67,88 @@ def _to_dt_utc(value: object) -> datetime | None:
         return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(timezone.utc)
     except ValueError:
         return None
+
+
+def _allow_owner_fallback(x_api_key: str) -> tuple[bool, object]:
+    settings = get_settings()
+    allow = bool(settings.owner_api_key and x_api_key == settings.owner_api_key)
+    return allow, settings
+
+
+def _build_regrid_token_payload(analysis: dict, mode: str) -> dict:
+    live = analysis["liveMiner"]
+    candidate = analysis["regridCandidate"] or {}
+    return {
+        "kind": "miner_regrid",
+        "mode": mode,
+        "buOrderId": live.get("buOrderId"),
+        "symbol": live.get("symbol"),
+        "suggestion": analysis.get("regridSuggestion"),
+        "candidate": candidate,
+        "rangeBreakState": analysis.get("rangeBreakState"),
+        "stabilizationState": analysis.get("stabilizationState"),
+    }
+
+
+async def _run_stabilization(payload: MinerStabilizationCheckIn, x_api_key: str) -> dict:
+    allow_owner_fallback, settings = _allow_owner_fallback(x_api_key)
+    cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
+    api_key, api_secret, _ = miners_service.require_credentials(
+        cred_payload, settings.pionex_api_key, settings.pionex_api_secret, allow_env_fallback=allow_owner_fallback
+    )
+    return await miners_service.analyze_miner_regrid(
+        api_key=api_key,
+        api_secret=api_secret,
+        bu_order_id=payload.buOrderId,
+        target_daily_usdt=payload.targetDailyUsdt,
+        mode=payload.mode,
+    )
+
+
+async def _run_regrid_preview(payload: MinerRegridPreviewIn, x_api_key: str) -> tuple[dict, str | None, int | None]:
+    allow_owner_fallback, settings = _allow_owner_fallback(x_api_key)
+    cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
+    api_key, api_secret, _ = miners_service.require_credentials(
+        cred_payload, settings.pionex_api_key, settings.pionex_api_secret, allow_env_fallback=allow_owner_fallback
+    )
+    analysis = await miners_service.analyze_miner_regrid(
+        api_key=api_key,
+        api_secret=api_secret,
+        bu_order_id=payload.buOrderId,
+        target_daily_usdt=payload.targetDailyUsdt,
+        mode=payload.mode,
+    )
+    if analysis.get("regridSuggestion") not in {"MIGRATE_UP", "MIGRATE_DOWN"} or not analysis.get("regridCandidate"):
+        return analysis, None, None
+    token = miners_service.sign_close_token(
+        _build_regrid_token_payload(analysis, payload.mode),
+        secret=settings.miner_confirmation_secret,
+        ttl_seconds=300,
+    )
+    token_payload = miners_service.verify_close_token(token, settings.miner_confirmation_secret)
+    return analysis, token, int(token_payload["exp"])
+
+
+async def _run_regrid_execute(payload: MinerRegridExecuteIn, x_api_key: str) -> tuple[dict, dict]:
+    allow_owner_fallback, settings = _allow_owner_fallback(x_api_key)
+    token_payload = miners_service.verify_close_token(payload.confirmationToken, settings.miner_confirmation_secret)
+    if token_payload.get("kind") != "miner_regrid":
+        raise HTTPException(status_code=400, detail="Invalid confirmation token kind")
+
+    cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
+    api_key, api_secret, _ = miners_service.require_credentials(
+        cred_payload, settings.pionex_api_key, settings.pionex_api_secret, allow_env_fallback=allow_owner_fallback
+    )
+    live = await miners_service.get_live_miner(
+        api_key=api_key,
+        api_secret=api_secret,
+        bu_order_id=str(token_payload.get("buOrderId") or ""),
+    )
+    candidate = token_payload.get("candidate")
+    if not isinstance(candidate, dict) or not candidate:
+        raise HTTPException(status_code=400, detail="Confirmation token does not contain a valid regrid candidate")
+    result = await miners_service.execute_regrid(api_key=api_key, api_secret=api_secret, live=live, candidate=candidate)
+    return token_payload, {"live": live, "candidate": candidate, "result": result, "reason": payload.reason}
 
 
 @router.get("", response_model=MinersResponse)
@@ -337,3 +426,135 @@ async def dashboard_miners_backfill_closed(
         rows=in_month_rows,
         errors=errors[:50],
     )
+
+
+@router.post("/stabilization-check", response_model=MinerStabilizationCheckOut)
+async def dashboard_miners_stabilization_check(
+    payload: MinerStabilizationCheckIn,
+    x_api_key: str = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+) -> MinerStabilizationCheckOut:
+    analysis = await _run_stabilization(payload, x_api_key)
+    repo = MinerOpsRepository(db)
+    await repo.save_event(
+        tenant_id=tenant_id_from_api_key(x_api_key),
+        bu_order_id=str(analysis["liveMiner"].get("buOrderId") or ""),
+        symbol=analysis["liveMiner"].get("symbol"),
+        event_type="stabilization_check",
+        reason=analysis.get("decisionReason"),
+        payload=analysis,
+    )
+    await repo.commit()
+    return MinerStabilizationCheckOut(
+        ok=True,
+        buOrderId=str(analysis["liveMiner"].get("buOrderId") or ""),
+        symbol=analysis["liveMiner"].get("symbol"),
+        mode=payload.mode,
+        rangeBreakState=str(analysis["rangeBreakState"]),
+        stabilizationState=str(analysis["stabilizationState"]),
+        regridSuggestion=str(analysis["regridSuggestion"]),
+        decisionReason=str(analysis["decisionReason"]),
+        stabilizationEvidence=dict(analysis["stabilizationEvidence"]),
+        regridCandidate=analysis.get("regridCandidate"),
+        blockers=list(analysis.get("blockers") or []),
+        liveMiner=analysis.get("liveMiner"),
+    )
+
+
+@router.post("/regrid-preview", response_model=MinerRegridPreviewOut)
+async def dashboard_miners_regrid_preview(
+    payload: MinerRegridPreviewIn,
+    x_api_key: str = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+) -> MinerRegridPreviewOut:
+    analysis, token, expires_at = await _run_regrid_preview(payload, x_api_key)
+    event_payload = dict(analysis)
+    event_payload["confirmationRequired"] = bool(token)
+    repo = MinerOpsRepository(db)
+    await repo.save_event(
+        tenant_id=tenant_id_from_api_key(x_api_key),
+        bu_order_id=str(analysis["liveMiner"].get("buOrderId") or ""),
+        symbol=analysis["liveMiner"].get("symbol"),
+        event_type="regrid_preview",
+        reason=analysis.get("decisionReason"),
+        payload=event_payload,
+    )
+    await repo.commit()
+    return MinerRegridPreviewOut(
+        ok=True,
+        buOrderId=str(analysis["liveMiner"].get("buOrderId") or ""),
+        symbol=analysis["liveMiner"].get("symbol"),
+        mode=payload.mode,
+        rangeBreakState=str(analysis["rangeBreakState"]),
+        stabilizationState=str(analysis["stabilizationState"]),
+        regridSuggestion=str(analysis["regridSuggestion"]),
+        decisionReason=str(analysis["decisionReason"]),
+        stabilizationEvidence=dict(analysis["stabilizationEvidence"]),
+        regridCandidate=analysis.get("regridCandidate"),
+        regridPayload=analysis.get("regridCandidate"),
+        blockers=list(analysis.get("blockers") or []),
+        confirmationRequired=bool(token),
+        expiresAt=expires_at,
+        confirmationToken=token,
+    )
+
+
+@router.post("/regrid", response_model=MinerRegridExecuteOut)
+async def dashboard_miners_regrid_execute(
+    payload: MinerRegridExecuteIn,
+    x_api_key: str = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+) -> MinerRegridExecuteOut:
+    token_payload, execution = await _run_regrid_execute(payload, x_api_key)
+    live = execution["live"]
+    candidate = execution["candidate"]
+    result = execution["result"]
+    repo = MinerOpsRepository(db)
+    await repo.save_event(
+        tenant_id=tenant_id_from_api_key(x_api_key),
+        bu_order_id=str(live.get("buOrderId") or ""),
+        symbol=live.get("symbol"),
+        event_type="regrid_execute",
+        reason=payload.reason,
+        payload={
+            "tokenPayload": token_payload,
+            "candidate": candidate,
+            "pionexResult": result,
+        },
+    )
+    await repo.commit()
+    return MinerRegridExecuteOut(
+        ok=True,
+        buOrderId=str(live.get("buOrderId") or ""),
+        symbol=live.get("symbol"),
+        regridSuggestion=str(token_payload.get("suggestion") or ""),
+        appliedRange={"bottom": candidate.get("bottom"), "top": candidate.get("top"), "row": candidate.get("row")},
+        pionexResult=result,
+    )
+
+
+@workers_router.post("/stabilization-check", response_model=MinerStabilizationCheckOut)
+async def dashboard_workers_stabilization_check(
+    payload: MinerStabilizationCheckIn,
+    x_api_key: str = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+) -> MinerStabilizationCheckOut:
+    return await dashboard_miners_stabilization_check(payload=payload, x_api_key=x_api_key, db=db)
+
+
+@workers_router.post("/regrid-preview", response_model=MinerRegridPreviewOut)
+async def dashboard_workers_regrid_preview(
+    payload: MinerRegridPreviewIn,
+    x_api_key: str = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+) -> MinerRegridPreviewOut:
+    return await dashboard_miners_regrid_preview(payload=payload, x_api_key=x_api_key, db=db)
+
+
+@workers_router.post("/regrid", response_model=MinerRegridExecuteOut)
+async def dashboard_workers_regrid_execute(
+    payload: MinerRegridExecuteIn,
+    x_api_key: str = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+) -> MinerRegridExecuteOut:
+    return await dashboard_miners_regrid_execute(payload=payload, x_api_key=x_api_key, db=db)

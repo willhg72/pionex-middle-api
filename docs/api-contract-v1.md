@@ -47,6 +47,9 @@ Exchange soportado: `Pionex` (Toobit retirado)
 - `POST /api/v1/dashboard/miners/close-preview`
 - `POST /api/v1/dashboard/miners/close`
 - `POST /api/v1/dashboard/miners/backfill-closed`
+- `POST /api/v1/dashboard/miners/stabilization-check`
+- `POST /api/v1/dashboard/miners/regrid-preview`
+- `POST /api/v1/dashboard/miners/regrid`
 
 ### Scalping
 
@@ -89,6 +92,9 @@ Exchange soportado: `Pionex` (Toobit retirado)
 - `GET /api/dashboard/discovery`
 - `POST /api/dashboard/opportunities/technical-gate`
 - `POST /api/dashboard/miners/backfill-closed`
+- `POST /api/dashboard/workers/stabilization-check`
+- `POST /api/dashboard/workers/regrid-preview`
+- `POST /api/dashboard/workers/regrid`
 - `GET /api/dashboard/btc-core`
 - `POST /api/dashboard/btc-core/buy-preview`
 - `POST /api/dashboard/btc-core/buy-execute`

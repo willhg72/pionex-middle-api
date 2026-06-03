@@ -59,6 +59,16 @@ class BotStatusResult:
     raw_response: dict[str, Any] | None = None
 
 
+@dataclass
+class BotAdjustResult:
+    success: bool
+    bu_order_id: str | None = None
+    action_id: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    raw_response: dict[str, Any] | None = None
+
+
 class PionexClient:
     _rate_limiter = PionexRateLimiter(rate_per_sec=10.0, burst=10.0)
     _weights = {
@@ -311,6 +321,97 @@ class PionexClient:
             )
         return BotCreationResult(
             success=False,
+            error_code=str(data.get("code") or ""),
+            error_message=str(data.get("message") or "Unknown error"),
+            raw_response=data,
+        )
+
+    async def adjust_spot_grid_params(
+        self,
+        *,
+        bu_order_id: str,
+        bottom: str | None = None,
+        top: str | None = None,
+        row: int | None = None,
+        quote_invest: str | None = None,
+    ) -> BotAdjustResult:
+        body = {
+            "buOrderId": str(bu_order_id),
+            "bottom": bottom,
+            "top": top,
+            "row": row,
+            "quoteInvest": quote_invest,
+        }
+        body = {k: v for k, v in body.items() if v is not None}
+        data = await self._signed_post("/api/v1/bot/orders/spotGrid/adjustParams", body)
+        payload = data.get("data") if isinstance(data.get("data"), dict) else {}
+        if data.get("result"):
+            return BotAdjustResult(
+                success=True,
+                bu_order_id=str(bu_order_id),
+                action_id=str(payload.get("action_id") or payload.get("actionId") or ""),
+                raw_response=data,
+            )
+        return BotAdjustResult(
+            success=False,
+            bu_order_id=str(bu_order_id),
+            error_code=str(data.get("code") or ""),
+            error_message=str(data.get("message") or "Unknown error"),
+            raw_response=data,
+        )
+
+    async def adjust_futures_grid_params(
+        self,
+        *,
+        bu_order_id: str,
+        bottom: str | None = None,
+        top: str | None = None,
+        row: int | None = None,
+        extra_margin: str | None = None,
+        quote_investment: str | None = None,
+        is_reinvest: bool | None = None,
+    ) -> BotAdjustResult:
+        body = {
+            "buOrderId": str(bu_order_id),
+            "bottom": bottom,
+            "top": top,
+            "row": row,
+            "extraMargin": extra_margin,
+            "quoteInvestment": quote_investment,
+            "isReinvest": is_reinvest,
+        }
+        body = {k: v for k, v in body.items() if v is not None}
+        data = await self._signed_post("/api/v1/bot/orders/futuresGrid/adjustParams", body)
+        payload = data.get("data") if isinstance(data.get("data"), dict) else {}
+        if data.get("result"):
+            return BotAdjustResult(
+                success=True,
+                bu_order_id=str(bu_order_id),
+                action_id=str(payload.get("action_id") or payload.get("actionId") or ""),
+                raw_response=data,
+            )
+        return BotAdjustResult(
+            success=False,
+            bu_order_id=str(bu_order_id),
+            error_code=str(data.get("code") or ""),
+            error_message=str(data.get("message") or "Unknown error"),
+            raw_response=data,
+        )
+
+    async def reduce_futures_grid(self, *, bu_order_id: str, reduce_rate: str) -> BotAdjustResult:
+        body = {"buOrderId": str(bu_order_id), "reduceRate": str(reduce_rate)}
+        data = await self._signed_post("/api/v1/bot/orders/futuresGrid/reduce", body)
+        payload = data.get("data") if isinstance(data.get("data"), dict) else {}
+        if data.get("result"):
+            return BotAdjustResult(
+                success=True,
+                bu_order_id=str(bu_order_id),
+                action_id=str(payload.get("action_id") or payload.get("actionId") or ""),
+                raw_response=data,
+            )
+        return BotAdjustResult(
+            success=False,
+            bu_order_id=str(bu_order_id),
             error_code=str(data.get("code") or ""),
             error_message=str(data.get("message") or "Unknown error"),
             raw_response=data,

@@ -18,6 +18,9 @@ Objetivo: traducir los llamados del frontend legado (`worker-dashboard.html`) al
 | `POST /api/dashboard/account-balance` | `POST /api/v1/dashboard/miners/account-balance` | `NO` alias directo (debe migrar) |
 | `POST /api/dashboard/workers/close-preview` | `POST /api/v1/dashboard/miners/close-preview` | `NO` alias directo (debe migrar) |
 | `POST /api/dashboard/workers/close` | `POST /api/v1/dashboard/miners/close` | `NO` alias directo (debe migrar) |
+| `POST /api/dashboard/workers/stabilization-check` | `POST /api/v1/dashboard/miners/stabilization-check` | `SI` alias activo |
+| `POST /api/dashboard/workers/regrid-preview` | `POST /api/v1/dashboard/miners/regrid-preview` | `SI` alias activo |
+| `POST /api/dashboard/workers/regrid` | `POST /api/v1/dashboard/miners/regrid` | `SI` alias activo |
 | `POST /api/dashboard/miners/backfill-closed` | `POST /api/v1/dashboard/miners/backfill-closed` | `SI` alias activo |
 | `GET /api/dashboard/discovery` | `GET /api/v1/dashboard/discovery` | `SI` alias activo |
 | `GET /api/dashboard/opportunities` | `GET /api/v1/dashboard/opportunities` | `NO` alias directo (debe migrar) |
