@@ -51,6 +51,10 @@ Exchange soportado: `Pionex` (Toobit retirado)
 - `POST /api/v1/dashboard/miners/regrid-preview`
 - `POST /api/v1/dashboard/miners/regrid`
 
+### Capital Reconciliation
+
+- `POST /api/v1/dashboard/capital-reconciliation`
+
 ### Scalping
 
 - `GET /api/v1/scalping/signals`
@@ -95,6 +99,7 @@ Exchange soportado: `Pionex` (Toobit retirado)
 - `POST /api/dashboard/workers/stabilization-check`
 - `POST /api/dashboard/workers/regrid-preview`
 - `POST /api/dashboard/workers/regrid`
+- `POST /api/dashboard/capital-reconciliation`
 - `GET /api/dashboard/btc-core`
 - `POST /api/dashboard/btc-core/buy-preview`
 - `POST /api/dashboard/btc-core/buy-execute`
