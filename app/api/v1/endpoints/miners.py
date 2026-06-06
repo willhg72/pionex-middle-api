@@ -24,6 +24,7 @@ from app.schemas.miners.responses import (
     MinersResponse,
 )
 from app.services.miners_service import miners_service
+from app.services.tenant_credentials import resolve_exchange_credentials
 from app.integrations.pionex_client import PionexClient
 
 router = APIRouter(prefix="/dashboard/miners", dependencies=[Depends(require_api_key)])
@@ -90,12 +91,9 @@ def _build_regrid_token_payload(analysis: dict, mode: str) -> dict:
     }
 
 
-async def _run_stabilization(payload: MinerStabilizationCheckIn, x_api_key: str) -> dict:
-    allow_owner_fallback, settings = _allow_owner_fallback(x_api_key)
+async def _run_stabilization(payload: MinerStabilizationCheckIn, x_api_key: str, db: AsyncSession) -> dict:
     cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
-    api_key, api_secret, _ = miners_service.require_credentials(
-        cred_payload, settings.pionex_api_key, settings.pionex_api_secret, allow_env_fallback=allow_owner_fallback
-    )
+    api_key, api_secret, _ = await resolve_exchange_credentials(x_api_key=x_api_key, payload=cred_payload, db=db)
     return await miners_service.analyze_miner_regrid(
         api_key=api_key,
         api_secret=api_secret,
@@ -105,12 +103,10 @@ async def _run_stabilization(payload: MinerStabilizationCheckIn, x_api_key: str)
     )
 
 
-async def _run_regrid_preview(payload: MinerRegridPreviewIn, x_api_key: str) -> tuple[dict, str | None, int | None]:
-    allow_owner_fallback, settings = _allow_owner_fallback(x_api_key)
+async def _run_regrid_preview(payload: MinerRegridPreviewIn, x_api_key: str, db: AsyncSession) -> tuple[dict, str | None, int | None]:
+    _, settings = _allow_owner_fallback(x_api_key)
     cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
-    api_key, api_secret, _ = miners_service.require_credentials(
-        cred_payload, settings.pionex_api_key, settings.pionex_api_secret, allow_env_fallback=allow_owner_fallback
-    )
+    api_key, api_secret, _ = await resolve_exchange_credentials(x_api_key=x_api_key, payload=cred_payload, db=db)
     analysis = await miners_service.analyze_miner_regrid(
         api_key=api_key,
         api_secret=api_secret,
@@ -129,16 +125,14 @@ async def _run_regrid_preview(payload: MinerRegridPreviewIn, x_api_key: str) -> 
     return analysis, token, int(token_payload["exp"])
 
 
-async def _run_regrid_execute(payload: MinerRegridExecuteIn, x_api_key: str) -> tuple[dict, dict]:
-    allow_owner_fallback, settings = _allow_owner_fallback(x_api_key)
+async def _run_regrid_execute(payload: MinerRegridExecuteIn, x_api_key: str, db: AsyncSession) -> tuple[dict, dict]:
+    _, settings = _allow_owner_fallback(x_api_key)
     token_payload = miners_service.verify_close_token(payload.confirmationToken, settings.miner_confirmation_secret)
     if token_payload.get("kind") != "miner_regrid":
         raise HTTPException(status_code=400, detail="Invalid confirmation token kind")
 
     cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
-    api_key, api_secret, _ = miners_service.require_credentials(
-        cred_payload, settings.pionex_api_key, settings.pionex_api_secret, allow_env_fallback=allow_owner_fallback
-    )
+    api_key, api_secret, _ = await resolve_exchange_credentials(x_api_key=x_api_key, payload=cred_payload, db=db)
     live = await miners_service.get_live_miner(
         api_key=api_key,
         api_secret=api_secret,
@@ -157,11 +151,7 @@ async def dashboard_miners(
     x_api_key: str = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session),
 ) -> MinersResponse:
-    settings = get_settings()
-    allow_owner_fallback = bool(settings.owner_api_key and x_api_key == settings.owner_api_key)
-    api_key, api_secret, source = miners_service.require_credentials(
-        {}, settings.pionex_api_key, settings.pionex_api_secret, allow_env_fallback=allow_owner_fallback
-    )
+    api_key, api_secret, source = await resolve_exchange_credentials(x_api_key=x_api_key, payload={}, db=db)
     repo = MinerOpsRepository(db)
     tenant_id = tenant_id_from_api_key(x_api_key)
     try:
@@ -187,11 +177,7 @@ async def dashboard_miners_with_credentials(
     x_api_key: str = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session),
 ) -> MinersResponse:
-    settings = get_settings()
-    allow_owner_fallback = bool(settings.owner_api_key and x_api_key == settings.owner_api_key)
-    api_key, api_secret, source = miners_service.require_credentials(
-        payload, settings.pionex_api_key, settings.pionex_api_secret, allow_env_fallback=allow_owner_fallback
-    )
+    api_key, api_secret, source = await resolve_exchange_credentials(x_api_key=x_api_key, payload=payload, db=db)
     repo = MinerOpsRepository(db)
     tenant_id = tenant_id_from_api_key(x_api_key)
     try:
@@ -258,10 +244,7 @@ async def dashboard_miner_close_execute(payload: MinerCloseExecuteIn, x_api_key:
     token_payload = miners_service.verify_close_token(payload.confirmationToken, settings.miner_confirmation_secret)
 
     cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
-    allow_owner_fallback = bool(settings.owner_api_key and x_api_key == settings.owner_api_key)
-    api_key, api_secret, _ = miners_service.require_credentials(
-        cred_payload, settings.pionex_api_key, settings.pionex_api_secret, allow_env_fallback=allow_owner_fallback
-    )
+    api_key, api_secret, _ = await resolve_exchange_credentials(x_api_key=x_api_key, payload=cred_payload, db=db)
 
     bu_order_id = str(token_payload.get("buOrderId") or "")
     symbol = token_payload.get("symbol")
@@ -292,24 +275,16 @@ async def dashboard_miner_close_execute(payload: MinerCloseExecuteIn, x_api_key:
 
 
 @router.get("/account-balance", response_model=AccountBalanceResponse)
-async def dashboard_account_balance(x_api_key: str = Depends(require_api_key)) -> AccountBalanceResponse:
-    settings = get_settings()
-    allow_owner_fallback = bool(settings.owner_api_key and x_api_key == settings.owner_api_key)
-    api_key, api_secret, source = miners_service.require_credentials(
-        {}, settings.pionex_api_key, settings.pionex_api_secret, allow_env_fallback=allow_owner_fallback
-    )
+async def dashboard_account_balance(x_api_key: str = Depends(require_api_key), db: AsyncSession = Depends(get_db_session)) -> AccountBalanceResponse:
+    api_key, api_secret, source = await resolve_exchange_credentials(x_api_key=x_api_key, payload={}, db=db)
     payload = await miners_service.get_account_balance(api_key=api_key, api_secret=api_secret)
     payload["credentialsSource"] = source
     return AccountBalanceResponse(**payload)
 
 
 @router.post("/account-balance", response_model=AccountBalanceResponse)
-async def dashboard_account_balance_with_credentials(payload: dict = Body(default_factory=dict), x_api_key: str = Depends(require_api_key)) -> AccountBalanceResponse:
-    settings = get_settings()
-    allow_owner_fallback = bool(settings.owner_api_key and x_api_key == settings.owner_api_key)
-    api_key, api_secret, source = miners_service.require_credentials(
-        payload, settings.pionex_api_key, settings.pionex_api_secret, allow_env_fallback=allow_owner_fallback
-    )
+async def dashboard_account_balance_with_credentials(payload: dict = Body(default_factory=dict), x_api_key: str = Depends(require_api_key), db: AsyncSession = Depends(get_db_session)) -> AccountBalanceResponse:
+    api_key, api_secret, source = await resolve_exchange_credentials(x_api_key=x_api_key, payload=payload, db=db)
     response = await miners_service.get_account_balance(api_key=api_key, api_secret=api_secret)
     response["credentialsSource"] = source
     return AccountBalanceResponse(**response)
@@ -342,12 +317,8 @@ async def dashboard_miners_backfill_closed(
             errors=[],
         )
 
-    settings = get_settings()
-    allow_owner_fallback = bool(settings.owner_api_key and x_api_key == settings.owner_api_key)
     cred_payload = {"api_key": apiKey or "", "api_secret": apiSecret or ""}
-    api_key, api_secret, _ = miners_service.require_credentials(
-        cred_payload, settings.pionex_api_key, settings.pionex_api_secret, allow_env_fallback=allow_owner_fallback
-    )
+    api_key, api_secret, _ = await resolve_exchange_credentials(x_api_key=x_api_key, payload=cred_payload, db=db)
 
     pionex = PionexClient(api_key, api_secret)
     rows: list[dict] = []
@@ -434,7 +405,7 @@ async def dashboard_miners_stabilization_check(
     x_api_key: str = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session),
 ) -> MinerStabilizationCheckOut:
-    analysis = await _run_stabilization(payload, x_api_key)
+    analysis = await _run_stabilization(payload, x_api_key, db)
     repo = MinerOpsRepository(db)
     await repo.save_event(
         tenant_id=tenant_id_from_api_key(x_api_key),
@@ -467,7 +438,7 @@ async def dashboard_miners_regrid_preview(
     x_api_key: str = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session),
 ) -> MinerRegridPreviewOut:
-    analysis, token, expires_at = await _run_regrid_preview(payload, x_api_key)
+    analysis, token, expires_at = await _run_regrid_preview(payload, x_api_key, db)
     event_payload = dict(analysis)
     event_payload["confirmationRequired"] = bool(token)
     repo = MinerOpsRepository(db)
@@ -505,7 +476,7 @@ async def dashboard_miners_regrid_execute(
     x_api_key: str = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session),
 ) -> MinerRegridExecuteOut:
-    token_payload, execution = await _run_regrid_execute(payload, x_api_key)
+    token_payload, execution = await _run_regrid_execute(payload, x_api_key, db)
     live = execution["live"]
     candidate = execution["candidate"]
     result = execution["result"]

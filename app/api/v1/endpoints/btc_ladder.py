@@ -2,7 +2,6 @@ from fastapi import APIRouter, Depends, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import require_api_key, tenant_id_from_api_key
-from app.core.settings import get_settings
 from app.db.session import get_db_session
 from app.repositories.btc_core_repository import BtcCoreRepository
 from app.repositories.btc_ladder_repository import BtcLadderRepository
@@ -19,10 +18,12 @@ from app.schemas.btc_ladder.responses import (
     BtcLadderPlaceAllIn,
     BtcLadderPlaceAllOut,
     BtcLadderPriceResponse,
+    BtcLadderReconcileIn,
+    BtcLadderReconcileOut,
     BtcLadderResponse,
 )
 from app.services.btc_ladder_service import btc_ladder_service
-from app.services.miners_service import miners_service
+from app.services.tenant_credentials import resolve_exchange_credentials
 
 router = APIRouter(prefix="/dashboard/btc-ladder", dependencies=[Depends(require_api_key)])
 
@@ -44,9 +45,8 @@ async def dashboard_btc_ladder_price() -> BtcLadderPriceResponse:
 
 @router.post("/place-all", response_model=BtcLadderPlaceAllOut)
 async def dashboard_btc_ladder_place_all(payload: BtcLadderPlaceAllIn, x_api_key: str = Depends(require_api_key), db: AsyncSession = Depends(get_db_session)) -> BtcLadderPlaceAllOut:
-    settings = get_settings()
     cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
-    api_key, api_secret, source = miners_service.resolve_credentials(cred_payload, settings.pionex_api_key, settings.pionex_api_secret)
+    api_key, api_secret, source = await resolve_exchange_credentials(x_api_key=x_api_key, payload=cred_payload, db=db)
     result = await btc_ladder_service.place_all(
         capital_usdt=payload.capitalUsdt,
         levels=payload.levels,
@@ -61,16 +61,16 @@ async def dashboard_btc_ladder_place_all(payload: BtcLadderPlaceAllIn, x_api_key
 
 
 @router.post("/cancel-all", response_model=BtcLadderCancelAllOut)
-async def dashboard_btc_ladder_cancel_all(payload: BtcLadderCancelAllIn) -> BtcLadderCancelAllOut:
-    settings = get_settings()
+async def dashboard_btc_ladder_cancel_all(payload: BtcLadderCancelAllIn, x_api_key: str = Depends(require_api_key), db: AsyncSession = Depends(get_db_session)) -> BtcLadderCancelAllOut:
     cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
-    api_key, api_secret, source = miners_service.resolve_credentials(cred_payload, settings.pionex_api_key, settings.pionex_api_secret)
+    api_key, api_secret, source = await resolve_exchange_credentials(x_api_key=x_api_key, payload=cred_payload, db=db)
     result = await btc_ladder_service.cancel_all(api_key=api_key, api_secret=api_secret, credentials_source=source)
     return BtcLadderCancelAllOut(**result)
 
 
 @router.post("/limit-preview", response_model=BtcLadderLimitPreviewOut)
 async def dashboard_btc_ladder_limit_preview(payload: BtcLadderLimitPreviewIn) -> BtcLadderLimitPreviewOut:
+    from app.core.settings import get_settings
     settings = get_settings()
     result = btc_ladder_service.limit_preview(
         usdt_amount=payload.usdtAmount,
@@ -87,9 +87,10 @@ async def dashboard_btc_ladder_limit_execute(
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     db: AsyncSession = Depends(get_db_session),
 ) -> BtcLadderLimitExecuteOut:
+    from app.core.settings import get_settings
     settings = get_settings()
     cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
-    api_key, api_secret, source = miners_service.resolve_credentials(cred_payload, settings.pionex_api_key, settings.pionex_api_secret)
+    api_key, api_secret, source = await resolve_exchange_credentials(x_api_key=x_api_key, payload=cred_payload, db=db)
     tenant_id = tenant_id_from_api_key(x_api_key)
     idem_repo = IdempotencyRepository(db)
     if idempotency_key:
@@ -124,3 +125,19 @@ async def dashboard_btc_ladder_fill_confirm(payload: BtcLadderFillConfirmIn, x_a
         core_repo=BtcCoreRepository(db),
     )
     return BtcLadderFillConfirmOut(**result)
+
+
+@router.post("/reconcile", response_model=BtcLadderReconcileOut)
+async def dashboard_btc_ladder_reconcile(payload: BtcLadderReconcileIn, x_api_key: str = Depends(require_api_key), db: AsyncSession = Depends(get_db_session)) -> BtcLadderReconcileOut:
+    cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
+    api_key, api_secret, source = await resolve_exchange_credentials(x_api_key=x_api_key, payload=cred_payload, db=db)
+    result = await btc_ladder_service.reconcile_orders(
+        api_key=api_key,
+        api_secret=api_secret,
+        credentials_source=source,
+        tenant_id=tenant_id_from_api_key(x_api_key),
+        auto_ledger=payload.autoLedger,
+        ladder_repo=BtcLadderRepository(db),
+        core_repo=BtcCoreRepository(db),
+    )
+    return BtcLadderReconcileOut(**result)

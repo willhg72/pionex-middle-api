@@ -16,7 +16,7 @@ from app.schemas.btc_core.responses import (
     BtcCoreResponse,
 )
 from app.services.btc_core_service import btc_core_service
-from app.services.miners_service import miners_service
+from app.services.tenant_credentials import resolve_exchange_credentials
 
 router = APIRouter(prefix="/dashboard/btc-core", dependencies=[Depends(require_api_key)])
 
@@ -79,7 +79,7 @@ async def dashboard_btc_core_buy_execute(
 ) -> BtcCoreBuyExecuteOut:
     settings = get_settings()
     cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
-    api_key, api_secret, source = miners_service.resolve_credentials(cred_payload, settings.pionex_api_key, settings.pionex_api_secret)
+    api_key, api_secret, source = await resolve_exchange_credentials(x_api_key=x_api_key, payload=cred_payload, db=db)
     repo = BtcCoreRepository(db)
     tenant_id = tenant_id_from_api_key(x_api_key)
     idem_repo = IdempotencyRepository(db)

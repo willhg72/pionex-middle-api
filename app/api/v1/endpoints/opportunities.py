@@ -2,6 +2,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from app.core.security import require_api_key
 from app.core.settings import get_settings
+from app.db.session import get_db_session
 from app.schemas.opportunities.responses import (
     OpportunitiesResponse,
     OpportunityCreateIn,
@@ -13,6 +14,8 @@ from app.schemas.opportunities.responses import (
 )
 from app.services.miners_service import miners_service
 from app.services.opportunities_service import opportunities_service
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.services.tenant_credentials import resolve_exchange_credentials
 
 router = APIRouter(prefix="/dashboard/opportunities", dependencies=[Depends(require_api_key)])
 
@@ -58,7 +61,7 @@ async def dashboard_opportunity_create_preview(payload: OpportunityCreatePreview
 
 
 @router.post("/create", response_model=OpportunityCreateOut)
-async def dashboard_opportunity_create(payload: OpportunityCreateIn, x_api_key: str = Depends(require_api_key)) -> OpportunityCreateOut:
+async def dashboard_opportunity_create(payload: OpportunityCreateIn, x_api_key: str = Depends(require_api_key), db: AsyncSession = Depends(get_db_session)) -> OpportunityCreateOut:
     settings = get_settings()
     rows = await opportunities_service.list_opportunities(
         universe=payload.symbol,
@@ -78,10 +81,7 @@ async def dashboard_opportunity_create(payload: OpportunityCreateIn, x_api_key: 
         raise HTTPException(status_code=404, detail="Opportunity row not found")
 
     cred_payload = {"api_key": payload.api_key or "", "api_secret": payload.api_secret or ""}
-    allow_owner_fallback = bool(settings.owner_api_key and x_api_key == settings.owner_api_key)
-    api_key, api_secret, _ = miners_service.require_credentials(
-        cred_payload, settings.pionex_api_key, settings.pionex_api_secret, allow_env_fallback=allow_owner_fallback
-    )
+    api_key, api_secret, _ = await resolve_exchange_credentials(x_api_key=x_api_key, payload=cred_payload, db=db)
 
     result = await opportunities_service.execute_create(
         token=payload.confirmationToken,

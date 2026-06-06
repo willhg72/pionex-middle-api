@@ -1,7 +1,10 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import router as api_v1_router
 from app.api.v1.endpoints.scalping import router as scalping_router
@@ -19,12 +22,34 @@ from app.db.base import Base
 from app.db.session import engine
 
 
+def register_dashboard_frontend(app: FastAPI) -> None:
+    dashboard_dist = Path(__file__).resolve().parents[1] / "frontend" / "dist"
+
+    if dashboard_dist.exists():
+        app.mount("/dashboard", StaticFiles(directory=dashboard_dist, html=True), name="dashboard")
+        return
+
+    @app.get("/dashboard", include_in_schema=False)
+    async def dashboard_not_built() -> HTMLResponse:
+        return HTMLResponse(
+            """
+            <html>
+              <body style="font-family:system-ui;padding:2rem">
+                <h1>Dashboard frontend not built yet</h1>
+                <p>Run <code>npm.cmd install</code> and <code>npm.cmd run build</code> inside <code>frontend/</code>.</p>
+              </body>
+            </html>
+            """,
+            status_code=503,
+        )
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     settings = get_settings()
     if settings.environment in {"staging", "prod"} and not settings.database_url.startswith("postgresql+asyncpg://"):
         raise RuntimeError("DATABASE_URL must use postgresql+asyncpg in staging/prod.")
-    if settings.auto_create_schema:
+    if settings.auto_create_schema or settings.environment in {"local", "dev"}:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
     yield
@@ -53,6 +78,7 @@ def create_app() -> FastAPI:
 
     register_middlewares(app)
     register_exception_handlers(app)
+    register_dashboard_frontend(app)
 
     @app.get("/")
     async def root() -> dict:

@@ -18,6 +18,7 @@ class BtcLadderResponse(BaseModel):
     inventory: dict
     ladderOrders: list[dict]
     errors: list[str]
+    reconciliation: dict | None = None
 
 
 class BtcLadderPriceResponse(BaseModel):
@@ -107,3 +108,19 @@ class BtcLadderFillConfirmIn(BaseModel):
 class BtcLadderFillConfirmOut(BaseModel):
     ok: bool
     fill: dict
+
+
+class BtcLadderReconcileIn(BaseModel):
+    api_key: str | None = None
+    api_secret: str | None = None
+    autoLedger: bool = False
+
+
+class BtcLadderReconcileOut(BaseModel):
+    ok: bool
+    credentialsSource: str
+    checkedCount: int
+    updatedCount: int
+    ledgerUpdates: int
+    statusCounts: dict
+    orders: list[dict]

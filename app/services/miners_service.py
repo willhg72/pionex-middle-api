@@ -103,11 +103,24 @@ class MinersService:
         return raw, False
 
     @staticmethod
-    def resolve_credentials(payload: dict[str, Any], env_key: str | None, env_secret: str | None, *, allow_env_fallback: bool = False) -> tuple[str, str, str]:
+    def resolve_credentials(
+        payload: dict[str, Any],
+        env_key: str | None,
+        env_secret: str | None,
+        *,
+        stored_key: str | None = None,
+        stored_secret: str | None = None,
+        allow_env_fallback: bool = False,
+    ) -> tuple[str, str, str]:
         req_k = str(payload.get("api_key") or "").strip()
         req_s = str(payload.get("api_secret") or "").strip()
         if req_k and req_s:
             return req_k, req_s, "request"
+
+        saved_k = str(stored_key or "").strip()
+        saved_s = str(stored_secret or "").strip()
+        if saved_k and saved_s:
+            return saved_k, saved_s, "tenant_settings"
 
         env_k = str(env_key or "").strip()
         env_s = str(env_secret or "").strip()
@@ -117,9 +130,22 @@ class MinersService:
         return "", "", "none"
 
     @staticmethod
-    def require_credentials(payload: dict[str, Any], env_key: str | None, env_secret: str | None, *, allow_env_fallback: bool = False) -> tuple[str, str, str]:
+    def require_credentials(
+        payload: dict[str, Any],
+        env_key: str | None,
+        env_secret: str | None,
+        *,
+        stored_key: str | None = None,
+        stored_secret: str | None = None,
+        allow_env_fallback: bool = False,
+    ) -> tuple[str, str, str]:
         api_key, api_secret, source = MinersService.resolve_credentials(
-            payload, env_key, env_secret, allow_env_fallback=allow_env_fallback
+            payload,
+            env_key,
+            env_secret,
+            stored_key=stored_key,
+            stored_secret=stored_secret,
+            allow_env_fallback=allow_env_fallback,
         )
         if not api_key or not api_secret:
             raise HTTPException(

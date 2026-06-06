@@ -1,0 +1,40 @@
+export const opportunitiesMock = {
+  candidates: [
+    {
+      id: 'op1', ticker: 'SOLUSDT', type: 'Long Grid', status: 'new',
+      score: 88, capitalRequired: 5_000, leverage: 4,
+      estimatedMonthly: 420, estimatedAnnual: 5_040,
+      volatility30d: 82, fundingRate: -0.008, volume24h: 4_280_000_000,
+      technicalGate: { trend: 'bullish', rsi: 52, support: 95.0, resistance: 115.0 },
+      notes: 'High volatility + positive trend = favorable grid conditions. SOL ecosystem momentum strong.',
+      createdAt: Date.now() - 3_600_000 * 2,
+    },
+    {
+      id: 'op2', ticker: 'NEARUSDT', type: 'Neutral Grid', status: 'watching',
+      score: 72, capitalRequired: 2_500, leverage: 5,
+      estimatedMonthly: 210, estimatedAnnual: 2_520,
+      volatility30d: 68, fundingRate: +0.003, volume24h: 380_000_000,
+      technicalGate: { trend: 'neutral', rsi: 48, support: 4.20, resistance: 6.10 },
+      notes: 'Consolidating range — neutral grid viable. Monitor for breakout.',
+      createdAt: Date.now() - 3_600_000 * 8,
+    },
+    {
+      id: 'op3', ticker: 'ARBUSDT', type: 'Long Grid', status: 'new',
+      score: 81, capitalRequired: 3_000, leverage: 4,
+      estimatedMonthly: 280, estimatedAnnual: 3_360,
+      volatility30d: 74, fundingRate: -0.005, volume24h: 620_000_000,
+      technicalGate: { trend: 'bullish', rsi: 56, support: 1.05, resistance: 1.48 },
+      notes: 'ARB showing bullish structure with moderate volatility. Favorable grid spread.',
+      createdAt: Date.now() - 3_600_000 * 1,
+    },
+    {
+      id: 'op4', ticker: 'OPUSDT', type: 'Long Grid', status: 'rejected',
+      score: 41, capitalRequired: 2_000, leverage: 5,
+      estimatedMonthly: 120, estimatedAnnual: 1_440,
+      volatility30d: 38, fundingRate: +0.012, volume24h: 180_000_000,
+      technicalGate: { trend: 'bearish', rsi: 38, support: 1.80, resistance: 2.40 },
+      notes: 'Low volatility + high positive funding rate = poor grid conditions. Rejected.',
+      createdAt: Date.now() - 86_400_000 * 2,
+    },
+  ],
+};

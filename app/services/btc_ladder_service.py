@@ -45,6 +45,60 @@ class BtcLadderService:
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Invalid confirmation token: {exc}") from exc
 
+    @staticmethod
+    def _extract_orders_from_open_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        orders = data.get("orders") if isinstance(data.get("orders"), list) else data.get("openOrders")
+        return orders if isinstance(orders, list) else []
+
+    @classmethod
+    def _normalize_open_order(cls, raw: dict[str, Any]) -> dict[str, Any]:
+        order_id = str(raw.get("orderId") or raw.get("id") or "")
+        client_order_id = str(raw.get("clientOrderId") or raw.get("clientOid") or "")
+        btc_amount = cls._safe_num(
+            raw.get("size")
+            or raw.get("amount")
+            or raw.get("quantity")
+            or raw.get("origQty")
+            or raw.get("origSize")
+        )
+        filled_btc = cls._safe_num(
+            raw.get("filledSize")
+            or raw.get("dealSize")
+            or raw.get("filledAmount")
+            or raw.get("executedQty")
+            or raw.get("tradedQty")
+            or raw.get("dealQuantity")
+        )
+        remaining_btc = cls._safe_num(
+            raw.get("remainingSize")
+            or raw.get("leftSize")
+            or raw.get("left")
+            or raw.get("remainQty")
+            or raw.get("remainingAmount")
+        )
+        if remaining_btc <= 0 and btc_amount > 0:
+            remaining_btc = max(0.0, btc_amount - filled_btc)
+        price = cls._safe_num(raw.get("price"))
+        status = str(raw.get("status") or raw.get("state") or "open").lower()
+        derived_status = "open"
+        if filled_btc > 0 and remaining_btc > 0:
+            derived_status = "partial_filled"
+        elif filled_btc > 0 and remaining_btc <= 0 and btc_amount > 0:
+            derived_status = "filled"
+        elif status in {"open", "new", "placed", "pending"}:
+            derived_status = "open"
+        return {
+            "orderId": order_id,
+            "clientOrderId": client_order_id,
+            "price": price,
+            "btcAmount": btc_amount,
+            "filledBtcAmount": filled_btc,
+            "remainingBtcAmount": remaining_btc,
+            "status": derived_status,
+            "rawStatus": status,
+        }
+
     async def price(self) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=20.0) as client:
             res = await client.get("https://api.pionex.com/api/v1/market/tickers", params={"type": "SPOT"})
@@ -73,6 +127,19 @@ class BtcLadderService:
             rows.append({"level": i, "discountPct": discount_pct, "price": level_price, "usdtAmount": usdt_alloc, "btcAmount": btc_size})
         return rows
 
+    def _summarize_reconciliation(self, orders: list[dict[str, Any]]) -> dict[str, Any]:
+        status_counts = {"open": 0, "partial_filled": 0, "filled": 0, "closed_unknown": 0, "cancelled": 0, "placed": 0}
+        pending_usdt = 0.0
+        for order in orders:
+            status = str(order.get("status") or "placed")
+            status_counts[status] = int(status_counts.get(status, 0)) + 1
+            if status in {"open", "partial_filled", "placed"}:
+                pending_usdt += self._safe_num(order.get("usdtAmount"))
+        return {
+            "statusCounts": status_counts,
+            "pendingUsdt": round(pending_usdt, 8),
+        }
+
     async def dashboard(self, *, tenant_id: str, ladder_repo: BtcLadderRepository, core_repo: BtcCoreRepository) -> dict[str, Any]:
         buys = await core_repo.list_buys(tenant_id=tenant_id, limit=1000)
         total_btc = sum(self._safe_num(r.get("btcAmount"), 0.0) for r in buys)
@@ -83,12 +150,23 @@ class BtcLadderService:
         ladder_btc = sum(self._safe_num(r.get("btcAmount"), 0.0) for r in buys if str(r.get("source")) in {"ladder_fill", "ladder_live"})
         ladder_usdt = sum(self._safe_num(r.get("usdtAmount"), 0.0) for r in buys if str(r.get("source")) in {"ladder_fill", "ladder_live"})
         orders = await ladder_repo.list_orders(tenant_id=tenant_id, limit=50)
+        reconciliation = self._summarize_reconciliation(orders)
         return {
             "ok": True,
             "generatedAt": int(time.time() * 1000),
-            "inventory": {"totalBtc": total_btc, "totalUsdt": total_usdt, "averagePrice": avg_price, "dcaBtc": dca_btc, "dcaUsdt": dca_usdt, "ladderBtc": ladder_btc, "ladderUsdt": ladder_usdt},
+            "inventory": {
+                "totalBtc": total_btc,
+                "totalUsdt": total_usdt,
+                "averagePrice": avg_price,
+                "dcaBtc": dca_btc,
+                "dcaUsdt": dca_usdt,
+                "ladderBtc": ladder_btc,
+                "ladderUsdt": ladder_usdt,
+                "pendingUsdt": reconciliation["pendingUsdt"],
+            },
             "ladderOrders": orders,
             "errors": [],
+            "reconciliation": reconciliation,
         }
 
     async def place_all(
@@ -117,7 +195,18 @@ class BtcLadderService:
                 result = await client.create_spot_order(request_body)
                 if result.success:
                     order_id = f"btc-ladder-order-{result.client_order_id or int(time.time())}"
-                    placed_row = {**row, "status": "placed", "pionexOrderId": result.order_id, "clientOrderId": result.client_order_id, "requestBody": request_body, "orderId": order_id}
+                    placed_row = {
+                        **row,
+                        "status": "placed",
+                        "filledBtcAmount": 0.0,
+                        "filledUsdtAmount": 0.0,
+                        "reconciled": False,
+                        "statusReason": "created_on_pionex",
+                        "pionexOrderId": result.order_id,
+                        "clientOrderId": result.client_order_id,
+                        "requestBody": request_body,
+                        "orderId": order_id,
+                    }
                     placed.append(placed_row)
                     await ladder_repo.create_order(
                         tenant_id=tenant_id,
@@ -144,9 +233,7 @@ class BtcLadderService:
         client = PionexClient(api_key, api_secret)
         try:
             open_payload = await client.get_spot_open_orders("BTC_USDT")
-            data = open_payload.get("data") if isinstance(open_payload.get("data"), dict) else {}
-            orders = data.get("orders") if isinstance(data.get("orders"), list) else data.get("openOrders")
-            orders = orders if isinstance(orders, list) else []
+            orders = self._extract_orders_from_open_payload(open_payload)
             targets = [str((r.get("orderId") or r.get("id") or "")) for r in orders if isinstance(r, dict) and str(r.get("side") or "").upper() == "BUY" and (r.get("orderId") or r.get("id"))]
             cancelled: list[str] = []
             failed: list[dict[str, Any]] = []
@@ -187,7 +274,23 @@ class BtcLadderService:
             return {"ok": False, "pionex_ordered": False, "credentials_source": credentials_source, "error_code": result.error_code, "error_message": result.error_message, "request_body": request_body}
         now = datetime.now(timezone.utc)
         order_id = f"btc-ladder-order-{result.client_order_id or now.strftime('%Y%m%d-%H%M%S')}"
-        order_row = {"orderId": order_id, "createdAt": now.isoformat(), "sourceType": "LADDER", "symbol": "BTC_USDT", "price": self._safe_num(token_payload.get("limitPrice"), 0.0), "usdtAmount": self._safe_num(token_payload.get("usdtAmount"), 0.0), "btcAmount": self._safe_num(token_payload.get("btcAmount"), 0.0), "status": "placed", "pionexOrderId": result.order_id, "clientOrderId": result.client_order_id, "requestBody": request_body}
+        order_row = {
+            "orderId": order_id,
+            "createdAt": now.isoformat(),
+            "sourceType": "LADDER",
+            "symbol": "BTC_USDT",
+            "price": self._safe_num(token_payload.get("limitPrice"), 0.0),
+            "usdtAmount": self._safe_num(token_payload.get("usdtAmount"), 0.0),
+            "btcAmount": self._safe_num(token_payload.get("btcAmount"), 0.0),
+            "status": "placed",
+            "filledBtcAmount": 0.0,
+            "filledUsdtAmount": 0.0,
+            "reconciled": False,
+            "statusReason": "created_on_pionex",
+            "pionexOrderId": result.order_id,
+            "clientOrderId": result.client_order_id,
+            "requestBody": request_body,
+        }
         await ladder_repo.create_order(
             tenant_id=tenant_id,
             order_id=order_id,
@@ -201,6 +304,120 @@ class BtcLadderService:
         )
         await ladder_repo.commit()
         return {"ok": True, "pionex_ordered": True, "credentials_source": credentials_source, "order": order_row}
+
+    async def reconcile_orders(
+        self,
+        *,
+        api_key: str,
+        api_secret: str,
+        credentials_source: str,
+        tenant_id: str,
+        auto_ledger: bool,
+        ladder_repo: BtcLadderRepository,
+        core_repo: BtcCoreRepository,
+    ) -> dict[str, Any]:
+        keys_ok, key_error = validate_api_keys(api_key, api_secret)
+        if not keys_ok:
+            raise HTTPException(status_code=400, detail=key_error)
+        order_models = await ladder_repo.list_order_models(tenant_id=tenant_id, limit=200)
+        client = PionexClient(api_key, api_secret)
+        updated_count = 0
+        ledger_updates = 0
+        try:
+            open_payload = await client.get_spot_open_orders("BTC_USDT")
+        finally:
+            await client.close()
+        normalized_open = [self._normalize_open_order(raw) for raw in self._extract_orders_from_open_payload(open_payload) if isinstance(raw, dict)]
+        by_order_id = {row["orderId"]: row for row in normalized_open if row.get("orderId")}
+        by_client_id = {row["clientOrderId"]: row for row in normalized_open if row.get("clientOrderId")}
+        serialized_orders: list[dict[str, Any]] = []
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        for model in order_models:
+            current = ladder_repo._serialize_row(model)
+            open_row = by_order_id.get(str(current.get("pionexOrderId") or "")) or by_client_id.get(str(current.get("clientOrderId") or ""))
+            next_status = str(current.get("status") or "placed")
+            next_filled_btc = self._safe_num(current.get("filledBtcAmount"))
+            next_filled_usdt = self._safe_num(current.get("filledUsdtAmount"))
+            reconciled = bool(current.get("reconciled"))
+            status_reason = current.get("statusReason")
+
+            if open_row:
+                next_status = str(open_row.get("status") or "open")
+                next_filled_btc = max(next_filled_btc, self._safe_num(open_row.get("filledBtcAmount")))
+                price = self._safe_num(current.get("price"))
+                next_filled_usdt = max(next_filled_usdt, next_filled_btc * price if price > 0 else 0.0)
+                status_reason = "visible_in_open_orders"
+            elif next_status not in {"filled", "cancelled", "closed_unknown"}:
+                next_status = "closed_unknown" if next_filled_btc <= 0 else "filled"
+                status_reason = "missing_from_open_orders"
+
+            if auto_ledger and next_status == "filled" and not reconciled and next_filled_btc > 0:
+                fill_price = self._safe_num(current.get("price"))
+                fill_usdt = next_filled_usdt if next_filled_usdt > 0 else next_filled_btc * fill_price
+                fill_id = f"{current.get('orderId')}-reconciled"
+                await core_repo.create_buy(
+                    tenant_id=tenant_id,
+                    buy_id=fill_id,
+                    source="ladder_live",
+                    btc_amount=next_filled_btc,
+                    usdt_amount=fill_usdt,
+                    price=fill_price,
+                    note="auto_reconciled_from_open_orders",
+                    order_id=current.get("orderId"),
+                    client_order_id=current.get("clientOrderId"),
+                    payload={
+                        "buyId": fill_id,
+                        "sourceType": "LADDER",
+                        "btcAmount": next_filled_btc,
+                        "usdtAmount": fill_usdt,
+                        "price": fill_price,
+                        "reconciledFromOrderId": current.get("orderId"),
+                    },
+                )
+                reconciled = True
+                ledger_updates += 1
+                status_reason = "filled_and_ledger_updated"
+
+            changed = (
+                next_status != str(current.get("status") or "placed")
+                or abs(next_filled_btc - self._safe_num(current.get("filledBtcAmount"))) > 1e-10
+                or abs(next_filled_usdt - self._safe_num(current.get("filledUsdtAmount"))) > 1e-8
+                or reconciled != bool(current.get("reconciled"))
+                or status_reason != current.get("statusReason")
+            )
+            if changed:
+                current = await ladder_repo.update_order_state(
+                    row=model,
+                    status=next_status,
+                    payload_patch={
+                        "filledBtcAmount": next_filled_btc,
+                        "filledUsdtAmount": next_filled_usdt,
+                        "reconciled": reconciled,
+                        "statusReason": status_reason,
+                        "lastCheckedAt": now_iso,
+                    },
+                )
+                updated_count += 1
+            else:
+                current["lastCheckedAt"] = now_iso
+            serialized_orders.append(current)
+
+        if updated_count or ledger_updates:
+            await ladder_repo.commit()
+        if ledger_updates:
+            await core_repo.commit()
+
+        reconciliation = self._summarize_reconciliation(serialized_orders)
+        return {
+            "ok": True,
+            "credentialsSource": credentials_source,
+            "checkedCount": len(serialized_orders),
+            "updatedCount": updated_count,
+            "ledgerUpdates": ledger_updates,
+            "statusCounts": reconciliation["statusCounts"],
+            "orders": serialized_orders,
+        }
 
     async def fill_confirm(
         self, *, btc_amount: float, usdt_amount: float, price: float | None, note: str | None, tenant_id: str, core_repo: BtcCoreRepository
