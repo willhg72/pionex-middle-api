@@ -4,6 +4,24 @@
  */
 import { css } from 'lit';
 
+export const numericStyles = css`
+  .num-ui,
+  .num-ui-strong {
+    font-family: var(--font-numeric);
+    font-variant-numeric: var(--font-numeric-variant);
+    font-feature-settings: var(--font-numeric-features);
+  }
+
+  .num-ui {
+    letter-spacing: var(--font-numeric-spacing);
+  }
+
+  .num-ui-strong {
+    letter-spacing: var(--font-numeric-spacing-strong);
+    font-weight: var(--weight-semibold);
+  }
+`;
+
 export const buttonStyles = css`
   .btn {
     display: inline-flex;

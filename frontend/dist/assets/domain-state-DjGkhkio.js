@@ -1,1 +1,0 @@
-import{v as a}from"./index-BdK4FrM0.js";const s="capintel_domain_",c={save(e,t){a.save(`${s}${e}`,t)},load(e){const t=a.load(`${s}${e}`);if(!t)return{};const{_savedAt:r,...o}=t;return o},clear(e){a.remove(`${s}${e}`)}};export{c as d};

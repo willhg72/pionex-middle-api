@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit';
+import { numericStyles } from '../styles/shared-styles.js';
 
 class StatCard extends LitElement {
   static properties = {
@@ -12,7 +13,7 @@ class StatCard extends LitElement {
     mono:     { type: Boolean },
   };
 
-  static styles = css`
+  static styles = [numericStyles, css`
     :host { display: block; }
 
     .card {
@@ -34,14 +35,9 @@ class StatCard extends LitElement {
     }
 
     .value {
-      font-family: var(--font-mono);
       font-size: var(--text-2xl);
-      font-weight: var(--weight-semibold);
-      letter-spacing: -0.025em;
       line-height: 1.1;
       color: var(--color-text-primary);
-      font-variant-numeric: tabular-nums slashed-zero;
-      font-feature-settings: "tnum" 1, "zero" 1;
     }
     .value.mono {}
     .value.sm { font-size: var(--text-xl); }
@@ -67,9 +63,6 @@ class StatCard extends LitElement {
     .delta {
       font-size: var(--text-xs);
       font-weight: var(--weight-medium);
-      font-family: var(--font-mono);
-      font-variant-numeric: tabular-nums slashed-zero;
-      font-feature-settings: "tnum" 1, "zero" 1;
     }
     .delta-pos { color: var(--color-positive); }
     .delta-neg { color: var(--color-negative); }
@@ -85,7 +78,7 @@ class StatCard extends LitElement {
     .accent-bar.warning  { background: var(--color-warning); }
     .accent-bar.accent   { background: var(--color-accent); }
     .accent-bar.neutral  { background: var(--color-border-strong); }
-  `;
+  `];
 
   render() {
     const accent = this.accent || 'neutral';
@@ -96,11 +89,11 @@ class StatCard extends LitElement {
       <div class="card">
         <div class="accent-bar ${accent}"></div>
         <div class="label">${this.label}</div>
-        <div class="value ${accent} ${size} ${this.mono ? 'mono' : ''}">${this.value}</div>
+        <div class="value num-ui-strong ${accent} ${size} ${this.mono ? 'mono' : ''}">${this.value}</div>
         <div class="footer">
           ${this.sub ? html`<span class="sub">${this.sub}</span>` : ''}
           ${this.delta !== undefined ? html`
-            <span class="delta ${deltaPos ? 'delta-pos' : 'delta-neg'}">
+            <span class="delta num-ui ${deltaPos ? 'delta-pos' : 'delta-neg'}">
               ${deltaPos ? '▲' : '▼'} ${Math.abs(this.delta).toFixed(2)}${this.deltaPct !== undefined ? ` (${Math.abs(this.deltaPct).toFixed(1)}%)` : ''}
             </span>
           ` : ''}

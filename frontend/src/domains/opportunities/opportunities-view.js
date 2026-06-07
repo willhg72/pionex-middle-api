@@ -2,10 +2,17 @@ import { LitElement, html, css } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
 import { fmt } from '../../utils/format.js';
 import { domainState } from '../../utils/domain-state.js';
-import { buttonStyles } from '../../styles/shared-styles.js';
+import { buttonStyles, numericStyles } from '../../styles/shared-styles.js';
 import { opportunitiesService } from '../../services/opportunities.service.js';
+import { settingsService } from '../../services/settings.service.js';
+import { consumeRefreshSlot, formatRefreshWindow, getPlanRefreshPolicy, getRefreshWindowState, normalizePlanTier } from '../../utils/refresh-policy.js';
 
 const DOMAIN = 'opportunities';
+const OPPORTUNITIES_REFRESH_POLICY = {
+  free: { maxManual: 1, windowMs: 30_000 },
+  pro: { maxManual: 2, windowMs: 15_000 },
+  premium: { maxManual: 2, windowMs: 10_000 },
+};
 
 class OpportunitiesView extends LitElement {
   static properties = {
@@ -19,14 +26,18 @@ class OpportunitiesView extends LitElement {
     _execStep: { type: String, state: true },
     _execResult: { type: Object, state: true },
     _technicalGate: { type: Object, state: true },
+    _refreshing: { type: Boolean, state: true },
+    _planTier: { type: String, state: true },
+    _refreshHits: { type: Array, state: true },
   };
 
-  static styles = [buttonStyles, css`
+  static styles = [buttonStyles, numericStyles, css`
     :host { display: block; }
     .page { padding: var(--content-padding); display: flex; flex-direction: column; gap: var(--space-4); }
     .toolbar { display:flex; gap:var(--space-3); flex-wrap:wrap; align-items:center; justify-content:space-between; }
     .toolbar-left, .toolbar-right { display:flex; gap:var(--space-3); flex-wrap:wrap; align-items:center; }
     .toolbar-note { font-size: var(--text-xs); color: var(--color-text-muted); }
+    .toolbar-note.live { color: var(--color-positive); }
     .kpi-row { display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--space-3); }
     .opps { display:flex; flex-direction:column; gap: var(--space-3); }
     .card {
@@ -42,7 +53,7 @@ class OpportunitiesView extends LitElement {
     .card.watching { border-left: 3px solid var(--color-warning); }
     .card.rejected { border-left: 3px solid var(--color-negative); opacity: 0.9; }
     .head { display:flex; justify-content:space-between; gap: var(--space-3); align-items:flex-start; }
-    .ticker { font-size: var(--text-lg); font-weight: var(--weight-bold); font-family: var(--font-mono); }
+    .ticker { font-size: var(--text-lg); font-weight: var(--weight-bold); }
     .meta { font-size: var(--text-xs); color: var(--color-text-muted); margin-top: 4px; }
     .status-chip {
       display:inline-flex; align-items:center; gap:6px; padding:4px 9px; border-radius:999px;
@@ -51,17 +62,13 @@ class OpportunitiesView extends LitElement {
     .status-chip.candidate { background: var(--color-positive-dim); color: var(--color-positive); }
     .status-chip.watching { background: var(--color-warning-dim); color: var(--color-warning); }
     .status-chip.rejected { background: var(--color-negative-dim); color: var(--color-negative); }
-    .score { font-family: var(--font-mono); font-size: 28px; font-weight: var(--weight-bold); }
+    .score { font-size: 28px; font-weight: var(--weight-bold); }
     .score-label { font-size: 10px; color: var(--color-text-muted); letter-spacing: 0.08em; text-transform: uppercase; }
     .metrics { display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: var(--space-3); }
     .metric { display:flex; flex-direction:column; gap:2px; }
     .metric-label { font-size:10px; color:var(--color-text-muted); letter-spacing:0.08em; text-transform:uppercase; }
     .metric-value {
-      font-family: var(--font-mono);
       font-size: var(--text-sm);
-      font-weight: var(--weight-medium);
-      font-variant-numeric: tabular-nums slashed-zero;
-      font-feature-settings: "tnum" 1, "zero" 1;
     }
     .metric-value.pos { color: var(--color-positive); }
     .metric-value.neg { color: var(--color-negative); }
@@ -100,11 +107,6 @@ class OpportunitiesView extends LitElement {
     .tv-frame { width:100%; height:100%; min-height:520px; border:none; }
     .panel-body { padding: 18px; display:flex; flex-direction:column; gap: 14px; overflow-y:auto; }
     .exec-row { display:flex; justify-content:space-between; gap:12px; font-size: var(--text-sm); padding-bottom:8px; border-bottom:1px solid var(--color-border-subtle); }
-    .exec-row span:last-child {
-      font-family: var(--font-mono);
-      font-variant-numeric: tabular-nums slashed-zero;
-      font-feature-settings: "tnum" 1, "zero" 1;
-    }
     .callout {
       padding: 12px 14px; border-radius: var(--radius-md);
       background: var(--color-bg-elevated); border: 1px solid var(--color-border-subtle);
@@ -142,31 +144,79 @@ class OpportunitiesView extends LitElement {
     this._execStep = 'preview';
     this._execResult = null;
     this._technicalGate = null;
+    this._refreshing = false;
+    this._planTier = normalizePlanTier(settingsService.getCachedSettings().planTier);
+    this._refreshHits = [];
+    this._hasLoadedOnce = false;
   }
 
   connectedCallback() {
     super.connectedCallback();
     this._load();
+    this._syncPlanTier();
   }
 
   _persist() {
     domainState.save(DOMAIN, { segment: this._segment, capital: this._capital });
   }
 
-  async _load() {
-    this._loading = true;
+  async _syncPlanTier() {
+    try {
+      const settings = await settingsService.getSettings();
+      this._planTier = normalizePlanTier(settings?.planTier);
+    } catch {
+      this._planTier = normalizePlanTier(settingsService.getCachedSettings().planTier);
+    }
+  }
+
+  _refreshPolicy() {
+    return getPlanRefreshPolicy(this._planTier, OPPORTUNITIES_REFRESH_POLICY);
+  }
+
+  _refreshWindowState() {
+    return getRefreshWindowState(this._refreshHits, this._refreshPolicy());
+  }
+
+  _refreshHint(state = getRefreshWindowState(this._refreshHits, this._refreshPolicy())) {
+    const policy = this._refreshPolicy();
+    return `${this._planTier.toUpperCase()} · manual ${policy.maxManual}/${policy.maxManual} · ventana ${formatRefreshWindow(policy.windowMs)} · disponibles ${state.remaining}`;
+  }
+
+  async _load({ silent = false } = {}) {
+    if (silent && this._hasLoadedOnce) {
+      this._refreshing = true;
+    } else {
+      this._loading = true;
+    }
     this._error = '';
     try {
       const payload = await opportunitiesService.getCandidates({ capital: this._capital });
       this._candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
       this._summary = payload.summary || {};
+      this._hasLoadedOnce = true;
     } catch (error) {
       this._error = error?.data?.detail || error?.message || 'Could not load opportunities.';
-      this._candidates = [];
-      this._summary = {};
+      if (!this._hasLoadedOnce) {
+        this._candidates = [];
+        this._summary = {};
+      }
     } finally {
       this._loading = false;
+      this._refreshing = false;
     }
+  }
+
+  async _refreshManually() {
+    const policy = this._refreshPolicy();
+    const state = consumeRefreshSlot(this._refreshHits, policy);
+    this._refreshHits = state.history;
+    if (!state.allowed) {
+      const waitSeconds = Math.max(1, Math.ceil(state.retryAfterMs / 1000));
+      window.toast?.(`Refresh disponible en ${waitSeconds}s.`, { type: 'warning' });
+      this.requestUpdate();
+      return;
+    }
+    await this._load({ silent: true });
   }
 
   _setSegment(value) {
@@ -258,11 +308,11 @@ class OpportunitiesView extends LitElement {
       <article class="card ${c.status}">
         <div class="head">
           <div>
-            <div class="ticker">${c.ticker}</div>
+            <div class="ticker num-ui-strong">${c.ticker}</div>
             <div class="meta">${c.type} · ${fmt.leverage(c.leverage)} · ${c.rawStatus}</div>
           </div>
           <div style="text-align:right">
-            <div class="score" style="color:${this._scoreColor(c.score)}">${c.score}</div>
+            <div class="score num-ui-strong" style="color:${this._scoreColor(c.score)}">${c.score}</div>
             <div class="score-label">Score</div>
           </div>
         </div>
@@ -273,12 +323,12 @@ class OpportunitiesView extends LitElement {
         </div>
 
         <div class="metrics">
-          <div class="metric"><span class="metric-label">Capital</span><span class="metric-value">${fmt.usd(c.capitalRequired, 2)}</span></div>
-          <div class="metric"><span class="metric-label">Est. monthly</span><span class="metric-value pos">${fmt.pnl(c.estimatedMonthly, 2)}</span></div>
-          <div class="metric"><span class="metric-label">Vol 30d</span><span class="metric-value">${fmt.pctPlain(c.volatility30d, 2)}</span></div>
-          <div class="metric"><span class="metric-label">Notional</span><span class="metric-value">${fmt.compact(c.volume24h)}</span></div>
-          <div class="metric"><span class="metric-label">Coverage min</span><span class="metric-value">${c.minCoverage.toFixed(2)}x</span></div>
-          <div class="metric"><span class="metric-label">Target/day</span><span class="metric-value">${fmt.usd(c.targetDailyUsdt, 2)}</span></div>
+          <div class="metric"><span class="metric-label">Capital</span><span class="metric-value num-ui">${fmt.usd(c.capitalRequired, 2)}</span></div>
+          <div class="metric"><span class="metric-label">Est. monthly</span><span class="metric-value num-ui pos">${fmt.pnl(c.estimatedMonthly, 2)}</span></div>
+          <div class="metric"><span class="metric-label">Vol 30d</span><span class="metric-value num-ui">${fmt.pctPlain(c.volatility30d, 2)}</span></div>
+          <div class="metric"><span class="metric-label">Notional</span><span class="metric-value num-ui">${fmt.compact(c.volume24h)}</span></div>
+          <div class="metric"><span class="metric-label">Coverage min</span><span class="metric-value num-ui">${c.minCoverage.toFixed(2)}x</span></div>
+          <div class="metric"><span class="metric-label">Target/day</span><span class="metric-value num-ui">${fmt.usd(c.targetDailyUsdt, 2)}</span></div>
         </div>
 
         <div class="gate">
@@ -336,12 +386,12 @@ class OpportunitiesView extends LitElement {
               </div>
             ` : html`
               <div class="panel-body">
-                <div class="exec-row"><span>Ticker</span><span>${c.ticker}</span></div>
-                <div class="exec-row"><span>Config</span><span>${c.configKey}</span></div>
-                <div class="exec-row"><span>Capital</span><span>${fmt.usd(this._capital, 2)}</span></div>
-                <div class="exec-row"><span>Leverage</span><span>${fmt.leverage(c.leverage)}</span></div>
-                <div class="exec-row"><span>Monthly est.</span><span>${fmt.pnl(c.estimatedMonthly, 2)}</span></div>
-                <div class="exec-row"><span>Stress close</span><span>${fmt.pnl(c.metrics?.expectedClosePnlAfter1PctAdverse || 0, 2)}</span></div>
+                <div class="exec-row"><span>Ticker</span><span class="num-ui">${c.ticker}</span></div>
+                <div class="exec-row"><span>Config</span><span class="num-ui">${c.configKey}</span></div>
+                <div class="exec-row"><span>Capital</span><span class="num-ui">${fmt.usd(this._capital, 2)}</span></div>
+                <div class="exec-row"><span>Leverage</span><span class="num-ui">${fmt.leverage(c.leverage)}</span></div>
+                <div class="exec-row"><span>Monthly est.</span><span class="num-ui">${fmt.pnl(c.estimatedMonthly, 2)}</span></div>
+                <div class="exec-row"><span>Stress close</span><span class="num-ui">${fmt.pnl(c.metrics?.expectedClosePnlAfter1PctAdverse || 0, 2)}</span></div>
                 <div class="callout">
                   <strong>Decision:</strong> ${c.notes}
                 </div>
@@ -378,6 +428,7 @@ class OpportunitiesView extends LitElement {
     this._candidates.forEach((item) => { counts[item.status] = (counts[item.status] || 0) + 1; });
     const candidates = this._filtered();
     const summary = this._summary || {};
+    const refreshState = this._refreshWindowState();
 
     return html`
       <div class="page">
@@ -395,6 +446,16 @@ class OpportunitiesView extends LitElement {
             ></segmented-control>
           </div>
           <div class="toolbar-right">
+            <span class="toolbar-note ${this._refreshing ? 'live' : ''}">
+              ${this._refreshing ? 'Sincronizando...' : this._refreshHint(refreshState)}
+            </span>
+            <button
+              class="btn btn-ghost"
+              ?disabled=${this._refreshing || !refreshState.allowed}
+              @click=${() => this._refreshManually()}
+            >
+              Refresh
+            </button>
             <label class="toolbar-note">Capital per miner</label>
             <input
               class="input"
@@ -406,7 +467,7 @@ class OpportunitiesView extends LitElement {
               @change=${(event) => {
                 this._capital = Number(event.target.value) || 175;
                 this._persist();
-                this._load();
+                this._load({ silent: this._hasLoadedOnce });
               }}
             />
           </div>

@@ -1,4 +1,4 @@
-import{i as n,b as l,a as o,g as i,h as d,c as t,d as s,e,r as g}from"./index-BdK4FrM0.js";class p extends n{static properties={_email:{type:String,state:!0},_loading:{type:Boolean,state:!0},_error:{type:String,state:!0},_result:{type:Object,state:!0},_lang:{type:String,state:!0}};static styles=[l,o`
+import{i as n,b as l,a as o,g as i,h as d,c as t,d as s,e,r as g}from"./index-Bb1-_Ymx.js";class p extends n{static properties={_email:{type:String,state:!0},_loading:{type:Boolean,state:!0},_error:{type:String,state:!0},_result:{type:Object,state:!0},_lang:{type:String,state:!0}};static styles=[l,o`
     :host { display:block; min-height:100vh; color:var(--color-text-primary); }
     .wrap { min-height:100vh; display:grid; place-items:center; padding:24px; background:linear-gradient(180deg, #07111f 0%, #0d1727 100%); }
     .card { width:min(560px,100%); padding:32px; border-radius:24px; background:rgba(9,16,27,0.92); border:1px solid rgba(255,255,255,0.07); }

@@ -7,6 +7,7 @@ import { getLanguage, getTimezone, i18n, setLanguage } from '../services/i18n.js
 import { settingsService } from '../services/settings.service.js';
 import { capitalService } from '../services/capital.service.js';
 import { fmt } from '../utils/format.js';
+import { numericStyles } from '../styles/shared-styles.js';
 
 class AppShell extends LitElement {
   static properties = {
@@ -21,7 +22,7 @@ class AppShell extends LitElement {
     _tickerMetrics: { type: Object, state: true },
   };
 
-  static styles = css`
+  static styles = [numericStyles, css`
     :host { display:flex; flex-direction:column; height:100vh; width:100vw; overflow:hidden; background:var(--color-bg-base); color:var(--color-text-primary); font-family:var(--font-sans); }
     .topbar { height:var(--topbar-height); min-height:var(--topbar-height); background:var(--color-bg-panel); border-bottom:1px solid var(--color-border-subtle); display:flex; align-items:center; padding:0 var(--space-5); gap:var(--space-6); z-index:50; }
     .topbar-brand { display:flex; align-items:center; gap:var(--space-2); width:var(--nav-width); }
@@ -69,12 +70,7 @@ class AppShell extends LitElement {
     .topbar-metric { display:flex; align-items:baseline; gap:var(--space-2); }
     .topbar-metric-label { font-size:var(--text-xs); color:var(--color-text-muted); letter-spacing:var(--tracking-wide); text-transform:uppercase; }
     .topbar-metric-value {
-      font-family:var(--font-mono);
       font-size:var(--text-sm);
-      font-weight:var(--weight-semibold);
-      letter-spacing:var(--tracking-tight);
-      font-variant-numeric: tabular-nums slashed-zero;
-      font-feature-settings: "tnum" 1, "zero" 1;
     }
     .metric-positive { color:var(--color-positive); }
     .metric-negative { color:var(--color-negative); }
@@ -83,7 +79,7 @@ class AppShell extends LitElement {
     .connection-dot { width:7px; height:7px; border-radius:50%; background:var(--color-positive); box-shadow:0 0 6px var(--color-positive); animation:pulse 2s ease-in-out infinite; }
     .connection-dot.disconnected { background:var(--color-negative); box-shadow:0 0 6px var(--color-negative); animation:none; }
     @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
-    .topbar-clock { font-family:var(--font-mono); font-size:var(--text-xs); color:var(--color-text-muted); letter-spacing:var(--tracking-wide); }
+    .topbar-clock { font-family:var(--font-numeric); font-size:var(--text-xs); color:var(--color-text-muted); letter-spacing:var(--tracking-wide); }
     .risk-badge-topbar { display:flex; align-items:center; gap:var(--space-1); padding:3px 8px; border-radius:var(--radius-sm); font-size:var(--text-xs); font-weight:var(--weight-semibold); letter-spacing:var(--tracking-wide); text-transform:uppercase; }
     .risk-low { background:var(--color-positive-dim); color:var(--color-positive); }
     .risk-medium { background:var(--color-warning-dim); color:var(--color-warning); }
@@ -122,7 +118,7 @@ class AppShell extends LitElement {
       .page-header { padding:var(--space-3); min-height:48px; }
       .page-title { font-size:var(--text-md); }
     }
-  `;
+  `];
 
     constructor() {
       super();
@@ -276,7 +272,7 @@ class AppShell extends LitElement {
           ${doubled.map((item, index) => html`
             <div class="topbar-metric" data-idx=${index}>
               <span class="topbar-metric-label">${item.label}</span>
-              <span class="topbar-metric-value ${item.cls}">${item.value}</span>
+              <span class="topbar-metric-value num-ui-strong ${item.cls}">${item.value}</span>
             </div>
           `)}
         </div>
