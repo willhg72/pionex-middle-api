@@ -17,6 +17,16 @@ def _parse_json_string(value: str):
         return None
 
 
+def _normalize_timestamp(value) -> int:
+    try:
+        raw = int(value or 0)
+    except Exception:
+        return 0
+    if raw > 2_147_483_647:
+        return raw // 1000
+    return raw
+
+
 async def run(backup_path: Path, api_key: str, purge_existing: bool) -> None:
     payload = json.loads(backup_path.read_text(encoding="utf-8"))
     data = payload.get("data") or {}
@@ -35,7 +45,7 @@ async def run(backup_path: Path, api_key: str, purge_existing: bool) -> None:
             session.add(
                 FinancialHistoryEntry(
                     tenant_id=tenant_id,
-                    t=int(row.get("t") or 0),
+                    t=_normalize_timestamp(row.get("t")),
                     month=row.get("month"),
                     total_money=row.get("totalMoney"),
                     active_revenue=row.get("activeRevenue"),
@@ -55,7 +65,7 @@ async def run(backup_path: Path, api_key: str, purge_existing: bool) -> None:
 
         for miner_ref, history in miner_history_map.items():
             history = history if isinstance(history, list) else []
-            t_values = [int(item.get("t")) for item in history if isinstance(item, dict) and item.get("t") is not None]
+            t_values = [_normalize_timestamp(item.get("t")) for item in history if isinstance(item, dict) and item.get("t") is not None]
             session.add(
                 MinerHistoryAggregate(
                     tenant_id=tenant_id,

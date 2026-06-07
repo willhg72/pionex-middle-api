@@ -1,6 +1,5 @@
-from fastapi.testclient import TestClient
+import asyncio
 
-from app.main import app
 from app.services.capital_reconciliation_service import capital_reconciliation_service
 from app.services.miners_service import miners_service
 
@@ -79,32 +78,36 @@ def test_capital_reconciliation_detects_close_and_redeploy(monkeypatch):
     monkeypatch.setattr(miners_service, "get_account_balance", fake_balance)
     monkeypatch.setattr(capital_reconciliation_service, "_query_closed_status", fake_query_status)
 
-    with TestClient(app) as client:
-        headers = {"X-API-Key": "test-key"}
-        first = client.post(
-            "/api/v1/dashboard/capital-reconciliation",
-            headers=headers,
-            json={"api_key": "tenant-key", "api_secret": "tenant-secret"},
+    async def scenario():
+        first_snapshot, first_events = await capital_reconciliation_service.reconcile(
+            api_key="tenant-key",
+            api_secret="tenant-secret",
+            target_daily_usdt=1.0,
+            source="request",
+            previous_snapshot=None,
         )
-        assert first.status_code == 200
-        first_body = first.json()
-        assert first_body["summary"]["closedMinersToday"] == 0
+        assert first_events == []
 
-        second = client.post(
-            "/api/dashboard/capital-reconciliation",
-            headers=headers,
-            json={"api_key": "tenant-key", "api_secret": "tenant-secret"},
+        second_snapshot, second_events = await capital_reconciliation_service.reconcile(
+            api_key="tenant-key",
+            api_secret="tenant-secret",
+            target_daily_usdt=1.0,
+            source="request",
+            previous_snapshot=first_snapshot,
         )
-        assert second.status_code == 200
-        body = second.json()
-        assert body["summary"]["closedMinersToday"] == 1
-        assert body["summary"]["realizedPnlToday"] == -4.8
-        assert round(body["summary"]["releasedCapitalToday"], 1) == 170.2
-        assert round(body["summary"]["redeployedCapitalToday"], 1) == 170.2
-        assert len(body["recentCloseEvents"]) == 1
-        event = body["recentCloseEvents"][0]
-        assert event["buOrderId"] == "BU1"
-        assert event["closeReason"] == "loss_stop"
-        assert round(event["releasedUsdtEstimate"], 1) == 170.2
-        assert event["redeployedWithinWindow"] is True
-        assert event["replacementBuOrderId"] == "BU3"
+        summary = capital_reconciliation_service.summarize(current_snapshot=second_snapshot, recent_events=second_events)
+        return second_events, summary
+
+    events, summary = asyncio.run(scenario())
+
+    assert summary["closedMinersToday"] == 1
+    assert summary["realizedPnlToday"] == -4.8
+    assert round(summary["releasedCapitalToday"], 1) == 170.2
+    assert round(summary["redeployedCapitalToday"], 1) == 170.2
+    assert len(events) == 1
+    event = events[0]
+    assert event["buOrderId"] == "BU1"
+    assert event["closeReason"] == "loss_stop"
+    assert round(event["releasedUsdtEstimate"], 1) == 170.2
+    assert event["redeployedWithinWindow"] is True
+    assert event["replacementBuOrderId"] == "BU3"

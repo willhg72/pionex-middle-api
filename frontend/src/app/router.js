@@ -3,8 +3,8 @@ export const ROUTES = {
   'sign-up': 'sign-up',
   'forgot-password': 'forgot-password',
   'reset-password': 'reset-password',
-  overview: 'overview',
   capital: 'capital',
+  overview: 'overview',
   miners: 'miners',
   opportunities: 'opportunities',
   scalping: 'scalping',
@@ -15,8 +15,8 @@ export const ROUTES = {
 };
 
 export const NAV_ITEMS = [
-  { id: 'overview', label: { es: 'Resumen', en: 'Overview' }, icon: '◈', group: 'main' },
   { id: 'capital', label: { es: 'Capital', en: 'Capital' }, icon: '◐', group: 'main' },
+  { id: 'overview', label: { es: 'Resumen', en: 'Overview' }, icon: '◈', group: 'main' },
   { id: 'miners', label: { es: 'Mineros Activos', en: 'Active Miners' }, icon: '⬡', group: 'operations' },
   { id: 'opportunities', label: { es: 'Oportunidades', en: 'Opportunities' }, icon: '◆', group: 'operations' },
   { id: 'scalping', label: { es: 'Scalping Lab', en: 'Scalping Lab' }, icon: '⚡', group: 'operations' },

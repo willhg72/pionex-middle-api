@@ -23,7 +23,11 @@ class TenantSettingsRepository:
         max_cap_pct: float,
         max_leverage: int,
         refresh_interval: int,
+        fixed_income_annual_pct: float,
+        plan_tier: str,
         theme: str,
+        language: str,
+        timezone: str,
     ) -> TenantSettings:
         row = await self.get_by_tenant_id(tenant_id)
         if row is None:
@@ -36,7 +40,11 @@ class TenantSettingsRepository:
                 max_cap_pct=max_cap_pct,
                 max_leverage=max_leverage,
                 refresh_interval=refresh_interval,
+                fixed_income_annual_pct=fixed_income_annual_pct,
+                plan_tier=plan_tier,
                 theme=theme,
+                language=language,
+                timezone=timezone,
             )
             self.session.add(row)
         else:
@@ -47,7 +55,11 @@ class TenantSettingsRepository:
             row.max_cap_pct = max_cap_pct
             row.max_leverage = max_leverage
             row.refresh_interval = refresh_interval
+            row.fixed_income_annual_pct = fixed_income_annual_pct
+            row.plan_tier = plan_tier
             row.theme = theme
+            row.language = language
+            row.timezone = timezone
         await self.session.flush()
         return row
 

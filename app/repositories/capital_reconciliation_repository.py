@@ -52,6 +52,22 @@ class CapitalReconciliationRepository:
         payload.setdefault("capturedAt", row.captured_at.isoformat() if row.captured_at else None)
         return payload
 
+    async def list_recent_snapshots(self, *, tenant_id: str, limit: int = 90) -> list[dict[str, Any]]:
+        stmt = (
+            select(FleetSnapshot)
+            .where(FleetSnapshot.tenant_id == tenant_id)
+            .order_by(desc(FleetSnapshot.captured_at))
+            .limit(limit)
+        )
+        rows = (await self.session.execute(stmt)).scalars().all()
+        out: list[dict[str, Any]] = []
+        for row in reversed(rows):
+            payload = _parse_json(row.payload_json)
+            payload.setdefault("snapshotId", row.id)
+            payload.setdefault("capturedAt", row.captured_at.isoformat() if row.captured_at else None)
+            out.append(payload)
+        return out
+
     async def list_recent_close_events(self, *, tenant_id: str, limit: int = 50) -> list[dict[str, Any]]:
         stmt = (
             select(MinerCloseEvent)

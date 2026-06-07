@@ -12,6 +12,25 @@ from app.services.miners_utils import validate_api_keys
 
 
 class TenantSettingsService:
+    DEFAULT_LANGUAGE = "es"
+    DEFAULT_TIMEZONE = "America/Bogota"
+    DEFAULT_PLAN_TIER = "free"
+    DEFAULT_FIXED_INCOME_ANNUAL_PCT = 3.48
+
+    @staticmethod
+    def normalize_language(value: str | None) -> str:
+        language = str(value or "").strip().lower()
+        return "en" if language == "en" else "es"
+
+    def normalize_timezone(self, value: str | None) -> str:
+        timezone = str(value or "").strip()
+        return timezone or self.DEFAULT_TIMEZONE
+
+    @staticmethod
+    def normalize_plan_tier(value: str | None) -> str:
+        tier = str(value or "").strip().lower()
+        return tier if tier in {"free", "pro", "premium"} else "free"
+
     def _derive_block(self, *, secret: str, nonce: bytes, counter: int) -> bytes:
         payload = nonce + counter.to_bytes(4, "big")
         return hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).digest()
@@ -76,7 +95,11 @@ class TenantSettingsService:
                 "maxCapPct": 90.0,
                 "maxLeverage": 10,
                 "refreshInterval": 30,
+                "fixedIncomeAnnualPct": self.DEFAULT_FIXED_INCOME_ANNUAL_PCT,
+                "planTier": self.DEFAULT_PLAN_TIER,
                 "theme": "dark",
+                "language": self.DEFAULT_LANGUAGE,
+                "timezone": self.DEFAULT_TIMEZONE,
                 "hasExchangeApiKey": False,
                 "hasExchangeApiSecret": False,
                 "exchangeApiKeyMasked": None,
@@ -91,7 +114,11 @@ class TenantSettingsService:
             "maxCapPct": row.max_cap_pct,
             "maxLeverage": row.max_leverage,
             "refreshInterval": row.refresh_interval,
+            "fixedIncomeAnnualPct": float(getattr(row, "fixed_income_annual_pct", self.DEFAULT_FIXED_INCOME_ANNUAL_PCT)),
+            "planTier": self.normalize_plan_tier(getattr(row, "plan_tier", self.DEFAULT_PLAN_TIER)),
             "theme": row.theme,
+            "language": self.normalize_language(getattr(row, "language", self.DEFAULT_LANGUAGE)),
+            "timezone": self.normalize_timezone(getattr(row, "timezone", self.DEFAULT_TIMEZONE)),
             "hasExchangeApiKey": bool(decrypted_key),
             "hasExchangeApiSecret": bool(decrypted_secret),
             "exchangeApiKeyMasked": self.mask_secret(decrypted_key),
@@ -110,7 +137,7 @@ class TenantSettingsService:
         encrypted_key = current.exchange_api_key_encrypted if current and keep_existing else self.encrypt_secret(str(next_key or "")) if next_key else None
         encrypted_secret = current.exchange_api_secret_encrypted if current and keep_existing else self.encrypt_secret(str(next_secret or "")) if next_secret else None
 
-        row = await repo.upsert(
+        await repo.upsert(
             tenant_id=tenant_id,
             exchange=str(payload.get("exchange") or "pionex").strip().lower(),
             exchange_api_key_encrypted=encrypted_key,
@@ -119,10 +146,15 @@ class TenantSettingsService:
             max_cap_pct=float(payload.get("maxCapPct") or 90.0),
             max_leverage=int(payload.get("maxLeverage") or 10),
             refresh_interval=int(payload.get("refreshInterval") or 30),
+            fixed_income_annual_pct=float(payload.get("fixedIncomeAnnualPct") or self.DEFAULT_FIXED_INCOME_ANNUAL_PCT),
+            plan_tier=self.normalize_plan_tier(payload.get("planTier")),
             theme=str(payload.get("theme") or "dark").strip().lower(),
+            language=self.normalize_language(payload.get("language")),
+            timezone=self.normalize_timezone(payload.get("timezone")),
         )
         await repo.commit()
-        return {"saved": True, **self.build_response(row)}
+        persisted = await repo.get_by_tenant_id(tenant_id)
+        return {"saved": True, **self.build_response(persisted)}
 
     async def resolve_exchange_credentials(self, repo: TenantSettingsRepository, tenant_id: str) -> tuple[str | None, str | None]:
         row = await repo.get_by_tenant_id(tenant_id)

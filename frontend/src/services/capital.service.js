@@ -1,14 +1,13 @@
-/**
- * Capital domain service.
- * Mock implementation — ready for /api/v1/capital backend integration.
- */
-
-import { mockCall } from './api-client.js';
-import { capitalMock } from '../mocks/capital.mock.js';
+import { apiFetch } from './api-client.js';
 
 export const capitalService = {
-  async getBuckets()  { return mockCall(capitalMock.buckets); },
-  async getByTicker() { return mockCall(capitalMock.byTicker); },
-  async getByRisk()   { return mockCall(capitalMock.byRisk); },
-  async getHistory()  { return mockCall(capitalMock.history); },
+  async getDashboard({ targetDailyUsdt = 1, fixedIncomeAnnualPct = null } = {}) {
+    const qs = new URLSearchParams({
+      targetDailyUsdt: String(targetDailyUsdt),
+    });
+    if (fixedIncomeAnnualPct !== null && fixedIncomeAnnualPct !== undefined) {
+      qs.set('fixedIncomeAnnualPct', String(fixedIncomeAnnualPct));
+    }
+    return apiFetch(`/dashboard/capital?${qs.toString()}`);
+  },
 };

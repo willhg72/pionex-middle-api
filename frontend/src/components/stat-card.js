@@ -34,13 +34,16 @@ class StatCard extends LitElement {
     }
 
     .value {
+      font-family: var(--font-mono);
       font-size: var(--text-2xl);
       font-weight: var(--weight-semibold);
       letter-spacing: -0.025em;
       line-height: 1.1;
       color: var(--color-text-primary);
+      font-variant-numeric: tabular-nums slashed-zero;
+      font-feature-settings: "tnum" 1, "zero" 1;
     }
-    .value.mono { font-family: var(--font-mono); }
+    .value.mono {}
     .value.sm { font-size: var(--text-xl); }
     .value.lg { font-size: var(--text-3xl); }
 
@@ -65,6 +68,8 @@ class StatCard extends LitElement {
       font-size: var(--text-xs);
       font-weight: var(--weight-medium);
       font-family: var(--font-mono);
+      font-variant-numeric: tabular-nums slashed-zero;
+      font-feature-settings: "tnum" 1, "zero" 1;
     }
     .delta-pos { color: var(--color-positive); }
     .delta-neg { color: var(--color-negative); }

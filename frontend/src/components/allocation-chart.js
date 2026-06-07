@@ -9,6 +9,7 @@ class AllocationChart extends LitElement {
     items:  { type: Array },
     height: { type: Number },
     total:  { type: Number },
+    _tip:   { type: Object, state: true },
   };
 
   static styles = css`
@@ -64,7 +65,42 @@ class AllocationChart extends LitElement {
       font-family: var(--font-mono);
       color: var(--color-text-muted);
     }
+
+    /* Segment hover tooltip */
+    .seg-tooltip {
+      position: fixed;
+      min-width: 148px;
+      padding: 9px 12px;
+      border-radius: 8px;
+      background: rgba(10,11,15,.97);
+      border: 1px solid var(--color-border-default);
+      box-shadow: 0 8px 24px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.04);
+      pointer-events: none;
+      z-index: 999;
+      opacity: 0;
+      scale: 0.96;
+      transition: opacity 80ms ease, scale 80ms ease;
+    }
+    .seg-tooltip.show { opacity: 1; scale: 1; }
+    .seg-label { font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--color-text-muted); margin-bottom: 5px; }
+    .seg-val   { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--color-text-primary); }
+    .seg-row   { display: flex; justify-content: space-between; gap: 12px; margin-top: 4px; }
+    .seg-lbl   { font-size: 10px; color: var(--color-text-muted); }
+    .seg-pct   { font-family: var(--font-mono); font-size: 11px; font-weight: 500; color: var(--color-accent); }
   `;
+
+  _showTip(e, item) {
+    this._tip = { x: e.clientX + 14, y: e.clientY - 58, item };
+  }
+
+  _moveTip(e) {
+    if (!this._tip) return;
+    this._tip = { ...this._tip, x: e.clientX + 14, y: e.clientY - 58 };
+  }
+
+  _hideTip() {
+    this._tip = null;
+  }
 
   render() {
     const items = this.items || [];
@@ -77,7 +113,9 @@ class AllocationChart extends LitElement {
             <div
               class="bar-seg"
               style="width:${item.pct}%; background:${item.color};"
-              title="${item.label}: $${item.value.toLocaleString()} (${item.pct.toFixed(1)}%)"
+              @mouseenter=${(e) => this._showTip(e, item)}
+              @mousemove=${(e) => this._moveTip(e)}
+              @mouseleave=${() => this._hideTip()}
             ></div>
           `)}
         </div>
@@ -92,6 +130,17 @@ class AllocationChart extends LitElement {
           `)}
         </div>
       </div>
+
+      ${this._tip ? html`
+        <div class="seg-tooltip show" style="left:${this._tip.x}px;top:${this._tip.y}px">
+          <div class="seg-label">${this._tip.item.label}</div>
+          <div class="seg-val">$${Number(this._tip.item.value || 0).toLocaleString()}</div>
+          <div class="seg-row">
+            <span class="seg-lbl">Porción</span>
+            <span class="seg-pct">${Number(this._tip.item.pct || 0).toFixed(1)}%</span>
+          </div>
+        </div>
+      ` : ''}
     `;
   }
 }

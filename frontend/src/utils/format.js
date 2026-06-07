@@ -1,11 +1,12 @@
 /**
  * Number and value formatting utilities for trading dashboard.
  */
+import { formatCurrency, formatDateTime, formatNumber, getLanguage, getLocale, getTimezone } from '../services/i18n.js';
 
 export const fmt = {
   /** Format as USD currency */
   usd(value, decimals = 0) {
-    return '$' + Math.abs(value).toLocaleString('en-US', {
+    return formatCurrency(Math.abs(value), {
       minimumFractionDigits: decimals,
       maximumFractionDigits: decimals,
     });
@@ -14,11 +15,11 @@ export const fmt = {
   /** Format signed USD (shows + or -) */
   pnl(value, decimals = 2) {
     const sign = value >= 0 ? '+' : '-';
-    const str = Math.abs(value).toLocaleString('en-US', {
+    const currency = formatCurrency(Math.abs(value), {
       minimumFractionDigits: decimals,
       maximumFractionDigits: decimals,
     });
-    return `${sign}$${str}`;
+    return `${sign}${currency}`;
   },
 
   /** Format percentage */
@@ -34,9 +35,9 @@ export const fmt = {
 
   /** Format number with K/M abbreviation */
   compact(value) {
-    if (Math.abs(value) >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
-    if (Math.abs(value) >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
-    return `$${value.toFixed(2)}`;
+    if (Math.abs(value) >= 1_000_000) return `${formatCurrency(value / 1_000_000, { maximumFractionDigits: 2 })}M`;
+    if (Math.abs(value) >= 1_000) return `${formatCurrency(value / 1_000, { maximumFractionDigits: 1 })}K`;
+    return formatCurrency(value, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   },
 
   /** Format BTC amount */
@@ -51,14 +52,14 @@ export const fmt = {
 
   /** Format date */
   date(ts) {
-    return new Date(ts).toLocaleDateString('en-US', {
+    return formatDateTime(ts, {
       month: 'short', day: 'numeric', year: 'numeric',
     });
   },
 
   /** Format datetime short */
   datetime(ts) {
-    return new Date(ts).toLocaleString('en-US', {
+    return formatDateTime(ts, {
       month: 'short', day: 'numeric',
       hour: '2-digit', minute: '2-digit', hour12: false,
     });
@@ -66,11 +67,11 @@ export const fmt = {
 
   /** Risk score to label */
   riskLabel(score) {
-    if (score < 25) return 'Minimal';
-    if (score < 50) return 'Low';
-    if (score < 65) return 'Medium';
-    if (score < 80) return 'High';
-    return 'Critical';
+    if (score < 25) return getLanguage() === 'en' ? 'Minimal' : 'Mínimo';
+    if (score < 50) return getLanguage() === 'en' ? 'Low' : 'Bajo';
+    if (score < 65) return getLanguage() === 'en' ? 'Medium' : 'Medio';
+    if (score < 80) return getLanguage() === 'en' ? 'High' : 'Alto';
+    return getLanguage() === 'en' ? 'Critical' : 'Crítico';
   },
 
   /** Risk score to CSS class */
@@ -78,5 +79,20 @@ export const fmt = {
     if (score < 50) return 'positive';
     if (score < 65) return 'warning';
     return 'negative';
+  },
+
+  number(value, decimals = 0) {
+    return formatNumber(value, {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    });
+  },
+
+  locale() {
+    return getLocale();
+  },
+
+  timezone() {
+    return getTimezone();
   },
 };

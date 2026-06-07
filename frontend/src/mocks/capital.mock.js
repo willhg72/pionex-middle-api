@@ -23,9 +23,13 @@ export const capitalMock = {
     { label: 'No Risk',     value:  4_300, pct:  4.9 },
   ],
 
-  history: Array.from({ length: 30 }, (_, i) => ({
-    date: new Date(Date.now() - (29 - i) * 86_400_000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-    total:  72_000 + i * 520 + Math.random() * 1000,
-    pnl:    -800 + i * 220 + Math.random() * 400,
-  })),
+  history: Array.from({ length: 30 }, (_, i) => {
+    const pointDate = new Date(Date.now() - (29 - i) * 86_400_000);
+    return {
+      isoDate: pointDate.toISOString(),
+      date: pointDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      total: 72_000 + i * 520 + Math.random() * 1000,
+      pnl: -800 + i * 220 + Math.random() * 400,
+    };
+  }),
 };

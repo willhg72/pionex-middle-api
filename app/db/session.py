@@ -11,6 +11,7 @@ engine: AsyncEngine = create_async_engine(
     _settings.database_url,
     echo=_settings.sql_echo,
     future=True,
+    pool_recycle=1800,
 )
 
 SessionLocal = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)

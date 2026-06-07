@@ -30,6 +30,12 @@ class CapitalReconciliationService:
                 "gridProfit": safe_float(m.get("gridProfit"), None),
                 "trendPnl": safe_float(m.get("trendPnl"), None),
                 "marginBalance": safe_float(m.get("marginBalance"), None),
+                "currentPrice": safe_float(m.get("currentPrice"), None),
+                "bottom": safe_float(m.get("bottom"), None),
+                "top": safe_float(m.get("top"), None),
+                "position": safe_float(m.get("position"), None),
+                "leverage": safe_float(m.get("leverage"), None),
+                "minerType": m.get("minerType"),
                 "status": m.get("status"),
             }
             for m in miners

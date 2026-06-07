@@ -1,9 +1,4 @@
-/**
- * Overview domain service.
- * Mock implementation — ready for /api/v1/overview backend integration.
- */
-
-import { mockCall } from './api-client.js';
+import { apiFetch, mockCall } from './api-client.js';
 import { overviewMock } from '../mocks/overview.mock.js';
 
 export const overviewService = {
@@ -35,5 +30,10 @@ export const overviewService = {
   /** GET /api/v1/overview/recommended-actions */
   async getRecommendedActions() {
     return mockCall(overviewMock.recommendedActions);
+  },
+
+  /** GET /api/v1/overview/macro */
+  async getMacroBasket() {
+    return apiFetch('/overview/macro');
   },
 };

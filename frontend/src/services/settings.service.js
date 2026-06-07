@@ -1,5 +1,6 @@
 import { apiFetch } from './api-client.js';
 import { persistence } from '../utils/persistence.js';
+import { applyLocalePreferences } from './i18n.js';
 
 const SETTINGS_KEY = 'capintel_settings';
 
@@ -14,15 +15,27 @@ function syncLocalCache(settings) {
     maxCapPct: settings.maxCapPct,
     maxLeverage: settings.maxLeverage,
     refreshInterval: settings.refreshInterval,
+    fixedIncomeAnnualPct: settings.fixedIncomeAnnualPct,
+    planTier: settings.planTier || current.planTier || 'free',
     theme: settings.theme,
+    language: settings.language,
+    timezone: settings.timezone,
     hasExchangeApiKey: settings.hasExchangeApiKey,
     hasExchangeApiSecret: settings.hasExchangeApiSecret,
     exchangeApiKeyMasked: settings.exchangeApiKeyMasked || null,
     updatedAt: settings.updatedAt || null,
   });
+  applyLocalePreferences({
+    language: settings.language,
+    timezone: settings.timezone,
+  });
 }
 
 export const settingsService = {
+  getCachedSettings() {
+    return persistence.load(SETTINGS_KEY) || {};
+  },
+
   async getSettings() {
     const data = await apiFetch('/settings');
     syncLocalCache(data);

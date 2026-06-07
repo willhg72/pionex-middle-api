@@ -40,7 +40,10 @@ def test_tenant_settings_round_trip(monkeypatch):
                 "maxCapPct": 88,
                 "maxLeverage": 9,
                 "refreshInterval": 45,
+                "planTier": "premium",
                 "theme": "dark",
+                "language": "en",
+                "timezone": "America/New_York",
             },
         )
         assert save_res.status_code == 200
@@ -56,6 +59,9 @@ def test_tenant_settings_round_trip(monkeypatch):
         assert current["maxCapPct"] == 88
         assert current["maxLeverage"] == 9
         assert current["refreshInterval"] == 45
+        assert current["planTier"] == "premium"
+        assert current["language"] == "en"
+        assert current["timezone"] == "America/New_York"
         assert current["hasExchangeApiKey"] is True
 
 
@@ -85,7 +91,10 @@ def test_tenant_settings_credentials_feed_live_endpoint(monkeypatch):
                 "maxCapPct": 90,
                 "maxLeverage": 10,
                 "refreshInterval": 30,
+                "planTier": "free",
                 "theme": "dark",
+                "language": "es",
+                "timezone": "America/Bogota",
             },
         )
         assert save_res.status_code == 200
@@ -116,7 +125,10 @@ def test_tenant_settings_reject_invalid_exchange_credentials(monkeypatch):
                 "maxCapPct": 90,
                 "maxLeverage": 10,
                 "refreshInterval": 30,
+                "planTier": "free",
                 "theme": "dark",
+                "language": "es",
+                "timezone": "America/Bogota",
             },
         )
 

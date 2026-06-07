@@ -39,6 +39,7 @@ COINGECKO_IDS = {
     "XLM": "stellar",
     "LDO": "lido-dao",
     "MATIC": "matic-network",
+    "ZEC": "zcash",
 }
 
 
@@ -86,6 +87,31 @@ class MarketDataService:
             raise HTTPException(status_code=404, detail=f"Unsupported ticker: {ticker}")
 
         return base_symbol, coin_id
+
+    async def get_spot_prices_usd(self, symbols: Sequence[str]) -> dict[str, float]:
+        normalized: list[tuple[str, str]] = []
+        for symbol in symbols:
+            base_symbol = self._normalize_base_symbol(symbol)
+            coin_id = COINGECKO_IDS.get(base_symbol)
+            if coin_id:
+                normalized.append((base_symbol, coin_id))
+        if not normalized:
+            return {}
+
+        ids = ",".join(sorted({coin_id for _, coin_id in normalized}))
+        payload = await self._coingecko_get_json(
+            path="/coins/markets",
+            params={"vs_currency": "usd", "ids": ids, "sparkline": "false"},
+            cache_key=f"spot-prices:{ids}",
+            ttl_seconds=45,
+        )
+        rows = payload if isinstance(payload, list) else []
+        by_id = {
+            str(row.get("id") or ""): float(row.get("current_price") or 0.0)
+            for row in rows
+            if isinstance(row, dict) and row.get("id") and row.get("current_price") is not None
+        }
+        return {symbol: by_id.get(coin_id, 0.0) for symbol, coin_id in normalized if by_id.get(coin_id, 0.0) > 0}
 
     @staticmethod
     def aggregate_ohlc_by_hours(rows: Sequence[Sequence[float]], agg_hours: int) -> list[dict]:

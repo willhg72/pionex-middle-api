@@ -11,12 +11,12 @@ const AUDIT_KEY    = 'capintel_audit';
 const MAX_AUDIT    = 200; // keep last N entries
 
 const initialState = {
-  // Global KPIs (from mock, future: API)
-  totalCapital:   87_450.00,
-  freeUsdt:       12_300.00,
-  openPnl:        +1_842.50,
-  monthlyPnl:     +5_210.00,
-  riskScore:      42,
+  // Global KPIs start at zero until a live tab refresh provides real metrics
+  totalCapital:   0,
+  freeUsdt:       0,
+  openPnl:        0,
+  monthlyPnl:     0,
+  riskScore:      0,
   monthlyGoal:    10_000,
   monthlyGoalProgress: 52.1,
 
@@ -28,7 +28,8 @@ const initialState = {
   capitalIdle:    12_300,
 
   // Badge counts
-  minerWarnings:    2,
+  activeMinersCount: 0,
+  minerWarnings:    0,
   newOpportunities: 3,
 
   // User preferences (persisted)

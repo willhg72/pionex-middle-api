@@ -3,39 +3,45 @@ import { exportDashboard, importDashboard } from '../../utils/export.js';
 import { persistence } from '../../utils/persistence.js';
 import { buttonStyles } from '../../styles/shared-styles.js';
 import { settingsService } from '../../services/settings.service.js';
+import {
+  applyLocalePreferences,
+  getBrowserTimezone,
+  getLanguage,
+  getTimezone,
+  getTimezoneOptions,
+  i18n,
+} from '../../services/i18n.js';
 
 class SettingsView extends LitElement {
   static properties = {
-    _apiKey:      { type: String, state: true },
-    _apiSecret:   { type: String, state: true },
-    _apiKeyMasked:{ type: String, state: true },
-    _apiStored:   { type: Boolean, state: true },
+    _apiKey: { type: String, state: true },
+    _apiSecret: { type: String, state: true },
+    _apiKeyMasked: { type: String, state: true },
+    _apiStored: { type: Boolean, state: true },
     _riskProfile: { type: String, state: true },
-    _maxCapPct:   { type: Number, state: true },
+    _planTier: { type: String, state: true },
+    _maxCapPct: { type: Number, state: true },
     _maxLeverage: { type: Number, state: true },
-    _exchange:    { type: String, state: true },
+    _exchange: { type: String, state: true },
     _refreshInterval: { type: Number, state: true },
-    _loading:     { type: Boolean, state: true },
-    _saved:       { type: Boolean, state: true },
-    _error:       { type: String, state: true },
+    _fixedIncomeAnnualPct: { type: Number, state: true },
+    _language: { type: String, state: true },
+    _timezone: { type: String, state: true },
+    _timezoneOptions: { type: Array, state: true },
+    _loading: { type: Boolean, state: true },
+    _saved: { type: Boolean, state: true },
+    _error: { type: String, state: true },
     _validationMessage: { type: String, state: true },
+    _lang: { type: String, state: true },
   };
 
   static styles = [buttonStyles, css`
     :host { display: block; }
     .page { padding: var(--content-padding); display: flex; flex-direction: column; gap: var(--space-5); }
-
     .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
     @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
-
-    .panel {
-      background: var(--color-bg-card);
-      border: 1px solid var(--color-border-subtle);
-      border-radius: var(--radius-lg);
-      padding: var(--card-padding);
-    }
+    .panel { background: var(--color-bg-card); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-lg); padding: var(--card-padding); }
     .panel-title { font-size: var(--text-sm); font-weight: var(--weight-semibold); margin-bottom: var(--space-4); }
-
     .field-group { display: flex; flex-direction: column; gap: var(--space-4); }
     .field { display: flex; flex-direction: column; gap: 6px; }
     .field-label {
@@ -45,7 +51,7 @@ class SettingsView extends LitElement {
       letter-spacing: 0.04em;
       text-transform: uppercase;
     }
-    .field-input {
+    .field-input, .field-select {
       width: 100%;
       padding: 10px var(--space-3);
       background: var(--color-bg-base);
@@ -60,32 +66,21 @@ class SettingsView extends LitElement {
       -webkit-appearance: none;
       appearance: none;
     }
-    .field-input:hover {
-      border-color: var(--color-border-strong);
-    }
-    .field-input:focus {
+    .field-input:hover, .field-select:hover { border-color: var(--color-border-strong); }
+    .field-input:focus, .field-select:focus {
       border-color: var(--color-accent);
       box-shadow: 0 0 0 3px rgba(91,141,239,0.18);
     }
-    select.field-input {
+    .field-select {
       background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23636b8a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
       background-repeat: no-repeat;
       background-position: right 12px center;
       padding-right: 36px;
       cursor: pointer;
     }
-    input[type=number].field-input {
-      font-family: var(--font-mono);
-      font-size: var(--text-base);
-      font-weight: var(--weight-semibold);
-    }
-    input[type=number].field-input::-webkit-inner-spin-button,
-    input[type=number].field-input::-webkit-outer-spin-button { opacity: 0.4; }
     .field-hint { font-size: var(--text-xs); color: var(--color-text-muted); line-height: 1.5; }
-
-    .risk-profiles {
-      display: flex; flex-direction: column; gap: var(--space-2);
-    }
+    .field-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+    .risk-profiles { display: flex; flex-direction: column; gap: var(--space-2); }
     .risk-profile-opt {
       display: flex; align-items: center; gap: var(--space-3);
       padding: var(--space-3);
@@ -97,7 +92,6 @@ class SettingsView extends LitElement {
     }
     .risk-profile-opt:hover { border-color: var(--color-border-default); }
     .risk-profile-opt.selected { border-color: var(--color-accent); background: var(--color-accent-dim); }
-
     .rp-radio {
       width: 16px; height: 16px; border-radius: 50%;
       border: 2px solid var(--color-border-strong);
@@ -106,54 +100,42 @@ class SettingsView extends LitElement {
     }
     .rp-radio.selected { border-color: var(--color-accent); }
     .rp-radio.selected::after {
-      content: ''; width: 7px; height: 7px;
-      border-radius: 50%; background: var(--color-accent);
+      content: '';
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--color-accent);
     }
     .rp-body { flex: 1; }
     .rp-name { font-size: var(--text-sm); font-weight: var(--weight-semibold); }
     .rp-desc { font-size: var(--text-xs); color: var(--color-text-muted); margin-top: 2px; }
-
     .limits-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
-
     .data-actions { display: flex; flex-direction: column; gap: var(--space-3); }
     .data-action {
       display: flex; align-items: center; justify-content: space-between;
-      padding: var(--space-3); background: var(--color-bg-elevated);
+      gap: var(--space-3);
+      padding: var(--space-3);
+      background: var(--color-bg-elevated);
       border-radius: var(--radius-md);
     }
     .da-label { font-size: var(--text-sm); font-weight: var(--weight-medium); }
     .da-sub { font-size: var(--text-xs); color: var(--color-text-muted); }
-
     .save-bar {
       display: flex; align-items: center; justify-content: flex-end; gap: var(--space-3);
       padding-top: var(--space-4); border-top: 1px solid var(--color-border-subtle); margin-top: var(--space-2);
+      flex-wrap: wrap;
     }
     .saved-msg { font-size: var(--text-xs); color: var(--color-positive); }
-    .status-note {
+    .status-note, .error-box, .success-box {
       padding: 10px 12px;
       border-radius: var(--radius-md);
-      background: var(--color-bg-elevated);
-      color: var(--color-text-muted);
       font-size: var(--text-xs);
       line-height: 1.5;
       border: 1px solid var(--color-border-subtle);
     }
-    .error-box {
-      padding: 10px 12px;
-      border-radius: var(--radius-md);
-      background: rgba(240,74,94,0.12);
-      color: var(--color-negative);
-      font-size: var(--text-xs);
-      border: 1px solid rgba(240,74,94,0.22);
-    }
-    .success-box {
-      padding: 10px 12px;
-      border-radius: var(--radius-md);
-      background: rgba(34,211,160,0.12);
-      color: var(--color-positive);
-      font-size: var(--text-xs);
-      border: 1px solid rgba(34,211,160,0.22);
-    }
+    .status-note { background: var(--color-bg-elevated); color: var(--color-text-muted); }
+    .error-box { background: rgba(240,74,94,0.12); color: var(--color-negative); border-color: rgba(240,74,94,0.22); }
+    .success-box { background: rgba(34,211,160,0.12); color: var(--color-positive); border-color: rgba(34,211,160,0.22); }
   `];
 
   constructor() {
@@ -164,19 +146,47 @@ class SettingsView extends LitElement {
     this._apiKeyMasked = saved.exchangeApiKeyMasked || '';
     this._apiStored = Boolean(saved.hasExchangeApiKey);
     this._riskProfile = saved.riskProfile || 'moderate';
+    this._planTier = saved.planTier || 'free';
     this._maxCapPct = saved.maxCapPct || 90;
     this._maxLeverage = saved.maxLeverage || 10;
     this._exchange = saved.exchange || 'pionex';
     this._refreshInterval = saved.refreshInterval || 30;
+    this._fixedIncomeAnnualPct = saved.fixedIncomeAnnualPct || 3.48;
+    this._language = saved.language || getLanguage();
+    this._timezone = saved.timezone || getTimezone();
+    this._timezoneOptions = getTimezoneOptions();
     this._loading = false;
     this._saved = false;
     this._error = '';
     this._validationMessage = '';
+    this._lang = getLanguage();
   }
 
   connectedCallback() {
     super.connectedCallback();
+    this._localeListener = () => {
+      this._lang = getLanguage();
+      this.requestUpdate();
+    };
+    window.addEventListener('capintel-locale-changed', this._localeListener);
     this._load();
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    window.removeEventListener('capintel-locale-changed', this._localeListener);
+  }
+
+  _t(key) {
+    return i18n(key, this._lang);
+  }
+
+  _normalizeError(error, fallbackKey) {
+    const detail = error?.data?.detail || error?.message || '';
+    if (detail === 'Internal server error. Please try again.') {
+      return this._t('genericTryAgain');
+    }
+    return detail || this._t(fallbackKey);
   }
 
   async _load() {
@@ -185,17 +195,29 @@ class SettingsView extends LitElement {
     try {
       const saved = await settingsService.getSettings();
       this._riskProfile = saved.riskProfile;
+      this._planTier = saved.planTier || 'free';
       this._maxCapPct = saved.maxCapPct;
       this._maxLeverage = saved.maxLeverage;
       this._exchange = saved.exchange;
       this._refreshInterval = saved.refreshInterval;
+      this._fixedIncomeAnnualPct = saved.fixedIncomeAnnualPct || 3.48;
+      this._language = saved.language || getLanguage();
+      this._timezone = saved.timezone || getTimezone();
       this._apiStored = saved.hasExchangeApiKey;
       this._apiKeyMasked = saved.exchangeApiKeyMasked || '';
+      this._timezoneOptions = [...new Set([this._timezone, getBrowserTimezone(), ...getTimezoneOptions()])];
+      applyLocalePreferences({ language: this._language, timezone: this._timezone });
     } catch (error) {
-      this._error = error?.data?.detail || error.message || 'Failed to load tenant settings.';
+      this._error = this._normalizeError(error, 'settingsLoadError');
     } finally {
       this._loading = false;
     }
+  }
+
+  _detectTimezone() {
+    this._timezone = getBrowserTimezone();
+    this._timezoneOptions = [...new Set([this._timezone, ...this._timezoneOptions])];
+    applyLocalePreferences({ language: this._language, timezone: this._timezone });
   }
 
   async _save() {
@@ -208,33 +230,47 @@ class SettingsView extends LitElement {
         exchangeApiKey: this._apiKey.trim() || null,
         exchangeApiSecret: this._apiSecret.trim() || null,
         riskProfile: this._riskProfile,
+        planTier: this._planTier,
         maxCapPct: this._maxCapPct,
         maxLeverage: this._maxLeverage,
         refreshInterval: this._refreshInterval,
+        fixedIncomeAnnualPct: this._fixedIncomeAnnualPct,
         theme: 'dark',
+        language: this._language,
+        timezone: this._timezone,
       };
       if (payload.exchangeApiKey || payload.exchangeApiSecret) {
         const validation = await settingsService.validateApiKey(payload);
         if (!validation.valid) {
           throw new Error(validation.reason || 'Pionex credentials could not be validated.');
         }
-        this._validationMessage = 'Pionex credentials validated successfully.';
+        this._validationMessage = this._t('apiValidated');
       }
       const saved = await settingsService.saveSettings(payload);
       persistence.save('capintel_settings', {
         ...(persistence.load('capintel_settings') || {}),
         exchangeApiKey: this._apiKey.trim(),
         exchangeApiSecret: this._apiSecret.trim(),
+        planTier: saved.planTier,
+        language: saved.language,
+        timezone: saved.timezone,
       });
       this._apiStored = saved.hasExchangeApiKey;
       this._apiKeyMasked = saved.exchangeApiKeyMasked || '';
       this._apiKey = '';
       this._apiSecret = '';
+      this._language = saved.language;
+      this._timezone = saved.timezone;
+      this._planTier = saved.planTier || this._planTier;
       this._saved = true;
-      setTimeout(() => this._saved = false, 3000);
-      window.toast?.('Tenant settings saved', { type: 'success' });
+      applyLocalePreferences({ language: saved.language, timezone: saved.timezone });
+      setTimeout(() => {
+        this._saved = false;
+      }, 3000);
+      window.toast?.(this._t('settingsSavedToast'), { type: 'success' });
     } catch (error) {
-      this._error = error?.data?.detail || error.message || 'Failed to save tenant settings.';
+      this._validationMessage = '';
+      this._error = this._normalizeError(error, 'settingsSaveError');
       window.toast?.(this._error, { type: 'error' });
     } finally {
       this._loading = false;
@@ -244,26 +280,49 @@ class SettingsView extends LitElement {
   async _import() {
     try {
       await importDashboard();
-      window.toast?.('Dashboard state imported', { type: 'success' });
-    } catch (e) {
-      window.toast?.('Import failed: ' + e.message, { type: 'error' });
+      window.toast?.(this._t('importDashboardState'), { type: 'success' });
+    } catch (error) {
+      window.toast?.(`${this._t('importFailed')}: ${error.message}`, { type: 'error' });
     }
   }
 
   _renderRiskProfile() {
     const profiles = [
-      { id: 'conservative', name: 'Conservative', desc: 'Max 60% deployed, max 5x leverage, only low-risk strategies' },
-      { id: 'moderate',     name: 'Moderate',     desc: 'Max 85% deployed, max 10x leverage, all strategies allowed' },
-      { id: 'aggressive',   name: 'Aggressive',   desc: 'Max 95% deployed, max 20x leverage, full strategy set' },
+      { id: 'conservative', name: this._t('conservative'), desc: this._t('conservativeDesc') },
+      { id: 'moderate', name: this._t('moderate'), desc: this._t('moderateDesc') },
+      { id: 'aggressive', name: this._t('aggressive'), desc: this._t('aggressiveDesc') },
     ];
+
     return html`
       <div class="risk-profiles">
-        ${profiles.map(p => html`
-          <div class="risk-profile-opt ${this._riskProfile === p.id ? 'selected' : ''}" @click=${() => this._riskProfile = p.id}>
-            <div class="rp-radio ${this._riskProfile === p.id ? 'selected' : ''}"></div>
+        ${profiles.map((profile) => html`
+          <div class="risk-profile-opt ${this._riskProfile === profile.id ? 'selected' : ''}" @click=${() => { this._riskProfile = profile.id; }}>
+            <div class="rp-radio ${this._riskProfile === profile.id ? 'selected' : ''}"></div>
             <div class="rp-body">
-              <div class="rp-name">${p.name}</div>
-              <div class="rp-desc">${p.desc}</div>
+              <div class="rp-name">${profile.name}</div>
+              <div class="rp-desc">${profile.desc}</div>
+            </div>
+          </div>
+        `)}
+      </div>
+    `;
+  }
+
+  _renderPlanTier() {
+    const plans = [
+      { id: 'free', name: this._t('freePlan'), desc: this._lang === 'en' ? 'Capital auto-refresh every 60s.' : 'Auto-refresh de Capital cada 60s.' },
+      { id: 'pro', name: this._t('proPlan'), desc: this._lang === 'en' ? 'Capital auto-refresh every 30s.' : 'Auto-refresh de Capital cada 30s.' },
+      { id: 'premium', name: this._t('premiumPlan'), desc: this._lang === 'en' ? 'Capital auto-refresh every 30s plus manual refresh with limits.' : 'Auto-refresh de Capital cada 30s más refresh manual con límites.' },
+    ];
+
+    return html`
+      <div class="risk-profiles">
+        ${plans.map((plan) => html`
+          <div class="risk-profile-opt ${this._planTier === plan.id ? 'selected' : ''}" @click=${() => { this._planTier = plan.id; }}>
+            <div class="rp-radio ${this._planTier === plan.id ? 'selected' : ''}"></div>
+            <div class="rp-body">
+              <div class="rp-name">${plan.name}</div>
+              <div class="rp-desc">${plan.desc}</div>
             </div>
           </div>
         `)}
@@ -275,13 +334,12 @@ class SettingsView extends LitElement {
     return html`
       <div class="page">
         <div class="two-col">
-          <!-- API Configuration -->
           <div class="panel">
-            <div class="panel-title">Exchange API Configuration</div>
+            <div class="panel-title">${this._t('exchangeApiConfiguration')}</div>
             <div class="field-group">
               <div class="field">
-                <span class="field-label">Exchange</span>
-                <select class="field-input" .value=${this._exchange} @change=${e => this._exchange = e.target.value}>
+                <span class="field-label">${this._t('exchange')}</span>
+                <select class="field-select" .value=${this._exchange} @change=${(event) => { this._exchange = event.target.value; }}>
                   <option value="bybit">Bybit</option>
                   <option value="binance">Binance</option>
                   <option value="okx">OKX</option>
@@ -289,92 +347,133 @@ class SettingsView extends LitElement {
                 </select>
               </div>
               <div class="field">
-                <span class="field-label">API Key</span>
-                <input class="field-input" type="password" placeholder="••••••••••••••••" .value=${this._apiKey} @input=${e => this._apiKey = e.target.value} />
-                <span class="field-hint">Read + Trade permissions required. Withdraw permission is NOT needed and should be disabled.</span>
+                <span class="field-label">${this._t('apiKey')}</span>
+                <input class="field-input" type="password" placeholder="••••••••••••••••" .value=${this._apiKey} @input=${(event) => { this._apiKey = event.target.value; }} />
+                <span class="field-hint">${this._t('apiKeyHint')}</span>
               </div>
               <div class="field">
-                <span class="field-label">API Secret</span>
-                <input class="field-input" type="password" placeholder="••••••••••••••••" .value=${this._apiSecret} @input=${e => this._apiSecret = e.target.value} />
+                <span class="field-label">${this._t('apiSecret')}</span>
+                <input class="field-input" type="password" placeholder="••••••••••••••••" .value=${this._apiSecret} @input=${(event) => { this._apiSecret = event.target.value; }} />
               </div>
               <div class="status-note">
                 ${this._apiStored
-                  ? html`Credenciales guardadas en backend para este tenant. Llave detectada: <code>${this._apiKeyMasked || 'stored'}</code>. Si llenas estos campos y guardas, se reemplazan.`
-                  : html`Todavia no hay credenciales persistidas en backend para este tenant.`}
+                  ? html`${this._t('credentialsStored')} <code>${this._apiKeyMasked || 'stored'}</code>. ${this._t('credentialsReplace')}`
+                  : html`${this._t('noCredentialsStored')}`}
               </div>
             </div>
           </div>
 
-          <!-- Risk Profile -->
           <div class="panel">
-            <div class="panel-title">Risk Profile</div>
-            ${this._renderRiskProfile()}
-
-            <div style="margin-top:var(--space-4);padding-top:var(--space-4);border-top:1px solid var(--color-border-subtle)">
-              <div class="panel-title" style="margin-bottom:var(--space-3)">Risk Limits</div>
-              <div class="limits-grid">
-                <div class="field">
-                  <span class="field-label">Max Capital Deployed (%)</span>
-                  <input class="field-input" type="number" min="50" max="100" step="5" .value=${this._maxCapPct} @input=${e => this._maxCapPct = +e.target.value} />
-                </div>
-                <div class="field">
-                  <span class="field-label">Max Leverage</span>
-                  <input class="field-input" type="number" min="1" max="50" step="1" .value=${this._maxLeverage} @input=${e => this._maxLeverage = +e.target.value} />
-                </div>
-                <div class="field">
-                  <span class="field-label">Refresh Interval (s)</span>
-                  <input class="field-input" type="number" min="5" max="3600" step="5" .value=${this._refreshInterval} @input=${e => this._refreshInterval = +e.target.value} />
+            <div class="panel-title">${this._t('preferences')}</div>
+            <div class="field-group">
+              <div class="field">
+                <span class="field-label">${this._t('language')}</span>
+                <select class="field-select" .value=${this._language} @change=${(event) => {
+                  this._language = event.target.value;
+                  applyLocalePreferences({ language: this._language, timezone: this._timezone });
+                }}>
+                  <option value="es">Español</option>
+                  <option value="en">English</option>
+                </select>
+              </div>
+              <div class="field">
+                <span class="field-label">${this._t('timezone')}</span>
+                <select class="field-select" .value=${this._timezone} @change=${(event) => {
+                  this._timezone = event.target.value;
+                  applyLocalePreferences({ language: this._language, timezone: this._timezone });
+                }}>
+                  ${this._timezoneOptions.map((timezone) => html`<option value=${timezone}>${timezone}</option>`)}
+                </select>
+                <span class="field-hint">${this._t('detectedTimezone')}: <code>${getBrowserTimezone()}</code></span>
+                <div class="field-actions">
+                  <button class="btn btn-ghost btn-sm" @click=${() => this._detectTimezone()}>${this._t('detectTimezone')}</button>
                 </div>
               </div>
             </div>
+          </div>
+        </div>
 
+        <div class="two-col">
+          <div class="panel">
+            <div class="panel-title">${this._t('planTier')}</div>
+            ${this._renderPlanTier()}
+          </div>
+
+          <div class="panel">
+            <div class="panel-title">${this._t('riskProfile')}</div>
+            ${this._renderRiskProfile()}
+            <div style="margin-top:var(--space-4);padding-top:var(--space-4);border-top:1px solid var(--color-border-subtle)">
+              <div class="panel-title" style="margin-bottom:var(--space-3)">${this._t('riskLimits')}</div>
+              <div class="limits-grid">
+                <div class="field">
+                  <span class="field-label">${this._t('maxCapitalDeployed')}</span>
+                  <input class="field-input" type="number" min="50" max="100" step="5" .value=${this._maxCapPct} @input=${(event) => { this._maxCapPct = Number(event.target.value); }} />
+                </div>
+                <div class="field">
+                  <span class="field-label">${this._t('maxLeverage')}</span>
+                  <input class="field-input" type="number" min="1" max="50" step="1" .value=${this._maxLeverage} @input=${(event) => { this._maxLeverage = Number(event.target.value); }} />
+                </div>
+                <div class="field">
+                  <span class="field-label">${this._t('refreshIntervalSeconds')}</span>
+                  <input class="field-input" type="number" min="5" max="3600" step="5" .value=${this._refreshInterval} @input=${(event) => { this._refreshInterval = Number(event.target.value); }} />
+                </div>
+                <div class="field">
+                  <span class="field-label">${this._t('fixedIncomeAnnualPct')}</span>
+                  <input class="field-input" type="number" min="0" max="100" step="0.01" .value=${this._fixedIncomeAnnualPct} @input=${(event) => { this._fixedIncomeAnnualPct = Number(event.target.value); }} />
+                  <span class="field-hint">${this._t('fixedIncomeAnnualPctHint')}</span>
+                </div>
+              </div>
+            </div>
             <div class="save-bar">
               ${this._error ? html`<span class="error-box">${this._error}</span>` : ''}
               ${this._validationMessage ? html`<span class="success-box">${this._validationMessage}</span>` : ''}
-              ${this._saved ? html`<span class="saved-msg">✓ Saved</span>` : ''}
-              <button class="btn btn-primary" ?disabled=${this._loading} @click=${this._save}>${this._loading ? 'Saving...' : 'Save Settings'}</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Data Management -->
-        <div class="panel">
-          <div class="panel-title">Data Management</div>
-          <div class="data-actions">
-            <div class="data-action">
-              <div>
-                <div class="da-label">Export Dashboard State</div>
-                <div class="da-sub">Download all local settings, preferences, and filters as JSON.</div>
-              </div>
-              <button class="btn btn-ghost" @click=${exportDashboard}>↓ Export JSON</button>
-            </div>
-            <div class="data-action">
-              <div>
-                <div class="da-label">Import Dashboard State</div>
-                <div class="da-sub">Restore from a previously exported JSON backup.</div>
-              </div>
-              <button class="btn btn-ghost" @click=${() => this._import()}>↑ Import JSON</button>
-            </div>
-            <div class="data-action">
-              <div>
-                <div class="da-label">Clear Local Storage</div>
-                <div class="da-sub">Remove all local dashboard preferences and reset to defaults.</div>
-              </div>
-              <button class="btn btn-danger btn-sm" @click=${() => { localStorage.clear(); window.toast?.('Local storage cleared', { type: 'warning' }); }}>
-                Clear All
+              ${this._saved ? html`<span class="saved-msg">✓ ${this._t('saved')}</span>` : ''}
+              <button class="btn btn-primary" ?disabled=${this._loading} @click=${() => this._save()}>
+                ${this._loading ? this._t('saving') : this._t('saveSettings')}
               </button>
             </div>
           </div>
+
+          <div class="panel">
+            <div class="panel-title">${this._t('dataManagement')}</div>
+            <div class="data-actions">
+              <div class="data-action">
+                <div>
+                  <div class="da-label">${this._t('exportDashboardState')}</div>
+                  <div class="da-sub">${this._t('exportDashboardSub')}</div>
+                </div>
+                <button class="btn btn-ghost" @click=${() => exportDashboard()}>${this._t('exportJson')}</button>
+              </div>
+              <div class="data-action">
+                <div>
+                  <div class="da-label">${this._t('importDashboardState')}</div>
+                  <div class="da-sub">${this._t('importDashboardSub')}</div>
+                </div>
+                <button class="btn btn-ghost" @click=${() => this._import()}>${this._t('importJson')}</button>
+              </div>
+              <div class="data-action">
+                <div>
+                  <div class="da-label">${this._t('clearLocalStorage')}</div>
+                  <div class="da-sub">${this._t('clearLocalStorageSub')}</div>
+                </div>
+                <button class="btn btn-danger btn-sm" @click=${() => {
+                  localStorage.clear();
+                  window.toast?.(this._t('clearLocalStorage'), { type: 'warning' });
+                }}>
+                  ${this._t('clearAll')}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <!-- About -->
         <div class="panel" style="border-color:var(--color-border-subtle)">
-          <div class="panel-title">About</div>
+          <div class="panel-title">${this._t('about')}</div>
           <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:var(--space-4)">
-            <div><div class="field-label">Version</div><div style="font-family:var(--font-mono);font-size:var(--text-sm);margin-top:2px">1.0.0-alpha</div></div>
-            <div><div class="field-label">Architecture</div><div style="font-size:var(--text-sm);color:var(--color-text-muted);margin-top:2px">Vite + Lit Web Components</div></div>
-            <div><div class="field-label">API Base</div><div style="font-family:var(--font-mono);font-size:var(--text-sm);margin-top:2px">/api/v1</div></div>
-            <div><div class="field-label">Data Mode</div><div style="font-size:var(--text-sm);color:var(--color-positive);margin-top:2px">Tenant-aware backend persistence for auth and settings is now active</div></div>
+            <div><div class="field-label">${this._t('version')}</div><div style="font-family:var(--font-mono);font-size:var(--text-sm);margin-top:2px">1.0.0-alpha</div></div>
+            <div><div class="field-label">${this._t('architecture')}</div><div style="font-size:var(--text-sm);color:var(--color-text-muted);margin-top:2px">Vite + Lit Web Components</div></div>
+            <div><div class="field-label">${this._t('apiBase')}</div><div style="font-family:var(--font-mono);font-size:var(--text-sm);margin-top:2px">/api/v1</div></div>
+            <div><div class="field-label">${this._t('dataMode')}</div><div style="font-size:var(--text-sm);color:var(--color-positive);margin-top:2px">${this._t('settingsPersistenceActive')}</div></div>
           </div>
         </div>
       </div>

@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 
 from app.api.v1.router import router as api_v1_router
 from app.api.v1.endpoints.scalping import router as scalping_router
@@ -20,6 +21,31 @@ from app.core.settings import configure_logging, get_settings
 from app.db import models as _models  # noqa: F401
 from app.db.base import Base
 from app.db.session import engine
+
+
+async def ensure_local_dev_columns(conn) -> None:
+    dialect = conn.dialect.name
+    if dialect == "sqlite":
+        rows = await conn.execute(text("PRAGMA table_info(tenant_settings)"))
+        columns = {row[1] for row in rows.fetchall()}
+        if "language" not in columns:
+            await conn.execute(text("ALTER TABLE tenant_settings ADD COLUMN language VARCHAR(8) NOT NULL DEFAULT 'es'"))
+        if "timezone" not in columns:
+            await conn.execute(
+                text("ALTER TABLE tenant_settings ADD COLUMN timezone VARCHAR(80) NOT NULL DEFAULT 'America/Bogota'")
+            )
+        if "plan_tier" not in columns:
+            await conn.execute(text("ALTER TABLE tenant_settings ADD COLUMN plan_tier VARCHAR(24) NOT NULL DEFAULT 'free'"))
+        if "fixed_income_annual_pct" not in columns:
+            await conn.execute(text("ALTER TABLE tenant_settings ADD COLUMN fixed_income_annual_pct FLOAT NOT NULL DEFAULT 3.48"))
+        return
+
+    await conn.execute(text("ALTER TABLE tenant_settings ADD COLUMN IF NOT EXISTS language VARCHAR(8) NOT NULL DEFAULT 'es'"))
+    await conn.execute(
+        text("ALTER TABLE tenant_settings ADD COLUMN IF NOT EXISTS timezone VARCHAR(80) NOT NULL DEFAULT 'America/Bogota'")
+    )
+    await conn.execute(text("ALTER TABLE tenant_settings ADD COLUMN IF NOT EXISTS plan_tier VARCHAR(24) NOT NULL DEFAULT 'free'"))
+    await conn.execute(text("ALTER TABLE tenant_settings ADD COLUMN IF NOT EXISTS fixed_income_annual_pct FLOAT NOT NULL DEFAULT 3.48"))
 
 
 def register_dashboard_frontend(app: FastAPI) -> None:
@@ -52,6 +78,8 @@ async def lifespan(_: FastAPI):
     if settings.auto_create_schema or settings.environment in {"local", "dev"}:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            if settings.environment in {"local", "dev"}:
+                await ensure_local_dev_columns(conn)
     yield
 
 
@@ -67,6 +95,7 @@ def create_app() -> FastAPI:
         openapi_url=settings.openapi_url,
         lifespan=lifespan,
     )
+    app.state.debug = settings.debug
 
     app.add_middleware(
         CORSMiddleware,

@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.services.btc_core_service import btc_core_service
 from app.services.btc_ladder_service import btc_ladder_service
+from app.services.capital_dashboard_service import capital_dashboard_service
 from app.services.discovery_service import discovery_service
 from app.services.miners_service import miners_service
 from app.services.opportunities_service import opportunities_service
@@ -144,6 +145,47 @@ def test_btc_core_tab_flows_from_frontend_spec(monkeypatch):
         d = client.post("/api/dashboard/btc-core/buy-execute", headers=AUTH, json={"confirmationToken": "btc-tok"})
 
     assert all(x.status_code == 200 for x in [a, b, c, d])
+
+
+def test_capital_tab_dashboard_from_frontend_spec(monkeypatch):
+    async def fake_dashboard(**kwargs):
+        return {
+            "ok": True,
+            "source": "tenant_settings",
+            "asOf": "2026-06-06T12:00:00Z",
+            "summary": {
+                "totalCapitalVisible": 15200,
+                "capitalMining": 7400,
+                "capitalNotMining": 7800,
+                "allMinerGain": 121.4,
+                "minerCapitalRoiPct": 1.64,
+                "fixedEquivalentMinerCapital": 70.0,
+            },
+            "buckets": [{"label": "Active Miners", "value": 7400, "pct": 48.68, "productive": True, "risk": "medium"}],
+            "byTicker": [{"ticker": "BTC", "value": 4200, "pct": 27.63}],
+            "byRisk": [{"label": "Low Risk", "value": 4200, "pct": 27.63}],
+            "history": [{"isoDate": "2026-06-06T12:00:00Z", "date": "Jun 6", "total": 15200, "pnl": 121.4}],
+            "monthlyHistory": [{"month": "2026-06", "label": "2026-06", "totalMoney": 15200, "monthRevenue": 121.4, "revenueAccumulated": 121.4, "monthRoiPct": 0.8}],
+            "recentCloseEvents": [],
+            "accountBreakdown": {"estimatedEquity": 9800, "otherAssetsValue": 1200, "btcCoreValue": 4200, "freeUsdt": 2400, "minerMargin": 7400, "promoMargin": 0},
+            "portfolioAssets": [{"coin": "USDT", "quantity": 2400, "free": 2400, "frozen": 0, "usdValue": 2400, "proportionPct": 57.14}, {"coin": "BTC", "quantity": 0.06, "free": 0.06, "frozen": 0, "usdValue": 1800, "proportionPct": 42.86}],
+            "btcDca": {"currentMonth": "2026-06", "currentUsdt": 90, "currentBtc": 0.0012, "currentCount": 2, "budget": 100, "remainingUsdt": 10, "currentAvg": 75000, "previousAvg": 78000, "previous3Avg": 77000, "previous3Count": 4, "dcaEdge": 4.0, "dcaEdge3m": 2.67},
+            "notes": {"history": "test"},
+        }
+
+    async def fake_credentials(**kwargs):
+        return ("k", "s", "tenant_settings")
+
+    monkeypatch.setattr(capital_dashboard_service, "build_dashboard", fake_dashboard)
+    monkeypatch.setattr("app.api.v1.endpoints.capital.resolve_exchange_credentials", fake_credentials)
+
+    with TestClient(app) as client:
+        res = client.get("/api/v1/dashboard/capital?targetDailyUsdt=1&fixedIncomeAnnualPct=12", headers=AUTH)
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert body["summary"]["capitalMining"] == 7400
 
 
 def test_btc_ladder_tab_flows_from_frontend_spec(monkeypatch):
